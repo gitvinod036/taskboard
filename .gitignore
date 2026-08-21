@@ -1,0 +1,45 @@
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Python
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.py[cod]
+backend/*.sqlite3
+backend/staticfiles/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+backend/venv/
+*.pyc
+__pycache__/
+.venv/
+venv/
+node_modules/
+dist/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+
+# Django
+staticfiles/
+*.sqlite3
+
+# Node
+node_modules/
+dist/
