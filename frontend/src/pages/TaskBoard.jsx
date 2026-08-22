@@ -93,27 +93,62 @@ export default function TaskBoard() {
     setNotice('')
   }
 
+  // async function saveTask(event) {
+  //   event.preventDefault()
+  //   setSaving(true)
+  //   setError('')
+  //   setNotice('')
+  //   try {
+  //     const request = editingId
+  //       ? api.patch(`/tasks/${editingId}/`, form)
+  //       : api.post('/tasks/', form)
+  //     const { data } = await request
+  //     setNotice(editingId ? 'Task updated.' : 'Task created.')
+  //     setForm(emptyForm)
+  //     setEditingId(null)
+  //     await loadTasks()
+  //     setSelectedTask(data)
+  //   } catch (requestError) {
+  //     setError(requestError.response?.data?.title?.[0] || requestError.response?.data?.description?.[0] || 'Task could not be saved.')
+  //   } finally {
+  //     setSaving(false)
+  //   }
+  // }
   async function saveTask(event) {
-    event.preventDefault()
-    setSaving(true)
-    setError('')
-    setNotice('')
-    try {
-      const request = editingId
-        ? api.patch(`/tasks/${editingId}/`, form)
-        : api.post('/tasks/', form)
-      const { data } = await request
-      setNotice(editingId ? 'Task updated.' : 'Task created.')
-      setForm(emptyForm)
-      setEditingId(null)
-      await loadTasks()
-      setSelectedTask(data)
-    } catch (requestError) {
-      setError(requestError.response?.data?.title?.[0] || requestError.response?.data?.description?.[0] || 'Task could not be saved.')
-    } finally {
-      setSaving(false)
+  event.preventDefault()
+  setSaving(true)
+  setError('')
+  setNotice('')
+
+  try {
+    const payload = {
+      ...form,
+      due_date: form.due_date || null,
     }
+
+    const request = editingId
+      ? api.patch(`/tasks/${editingId}/`, payload)
+      : api.post('/tasks/', payload)
+
+    const { data } = await request
+
+    setNotice(editingId ? 'Task updated.' : 'Task created.')
+    setForm(emptyForm)
+    setEditingId(null)
+
+    await loadTasks()
+    setSelectedTask(data)
+  } catch (requestError) {
+    setError(
+      requestError.response?.data?.title?.[0] ||
+      requestError.response?.data?.description?.[0] ||
+      requestError.response?.data?.due_date?.[0] ||
+      'Task could not be saved.'
+    )
+  } finally {
+    setSaving(false)
   }
+}
 
   async function deleteTask(task) {
     if (!window.confirm(`Delete “${task.title}”?`)) return
