@@ -197,6 +197,31 @@ button:disabled { opacity: 0.55; cursor: wait; transform: none; }
 .dashboard-card > span:last-child { color: #64748b; font-size: 0.84rem; font-weight: 400; line-height: 1.5; }
 .card-icon { color: #1d4ed8; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; }
 
+.metric-state { max-width: 1200px; margin: 0 auto 20px; }
+.metric-kpi-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 12px; max-width: 1200px; margin: 0 auto 18px; }
+.metric-kpi { display: grid; gap: 6px; padding: 18px; border: 1px solid #d8e1ec; border-radius: 10px; background: #fff; }
+.metric-kpi strong { color: #102a56; font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; }
+.metric-kpi span { color: #64748b; font-size: 0.72rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; }
+.metric-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; max-width: 1200px; margin: 0 auto 18px; align-items: start; }
+.metric-panel { padding: 24px; border: 1px solid #d8e1ec; border-radius: 10px; background: #fff; }
+.metric-panel-wide { grid-column: 1 / -1; }
+.metric-panel h2 { margin: 0; color: #102a56; font-size: 1.2rem; font-weight: 600; letter-spacing: -0.015em; }
+.metric-subheading { margin: 22px 0 0; color: #30425e; font-size: 0.84rem; font-weight: 600; }
+.metric-bars { display: grid; gap: 10px; margin: 16px 0 0; padding: 0; list-style: none; }
+.metric-bars li { display: grid; grid-template-columns: minmax(96px, 0.6fr) 1fr auto; gap: 12px; align-items: center; }
+.metric-bar-label { color: #30425e; font-size: 0.8125rem; font-weight: 500; }
+.metric-bar-track { height: 8px; border-radius: 4px; background: #eef2f7; overflow: hidden; }
+.metric-bar-fill { display: block; height: 100%; border-radius: 4px; background: #2563eb; }
+.metric-bar-value { color: #64748b; font-size: 0.75rem; font-weight: 500; white-space: nowrap; }
+.metric-trend { display: flex; align-items: flex-end; gap: 3px; height: 120px; margin: 18px 0 0; padding: 0; list-style: none; }
+.metric-trend li { display: flex; align-items: flex-end; flex: 1; height: 100%; }
+.metric-trend-bar { display: block; width: 100%; border-radius: 3px 3px 0 0; background: #93c5fd; }
+.metric-trend-axis { display: flex; justify-content: space-between; margin: 8px 0 0; color: #64748b; font-size: 0.72rem; font-weight: 400; }
+.metric-list { display: grid; gap: 8px; margin: 16px 0 0; padding: 0; list-style: none; }
+.metric-list li { display: grid; gap: 4px; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; }
+.metric-list strong { color: #102a56; font-size: 0.9rem; font-weight: 600; }
+.metric-list span { color: #64748b; font-size: 0.78rem; font-weight: 400; }
+
 .workspace-header { display: flex; justify-content: space-between; align-items: end; gap: 20px; max-width: 1320px; margin: 0 auto 32px; }
 .workspace-header h1 { font-size: clamp(1.85rem, 4vw, 2.5rem); font-weight: 700; letter-spacing: -0.025em; }
 .header-actions { display: flex; align-items: center; gap: 14px; color: #52627a; font-size: 0.84rem; font-weight: 500; }
@@ -336,6 +361,7 @@ button:disabled { opacity: 0.55; cursor: wait; transform: none; }
   .account-nav { margin-left: auto; }
   .dashboard-grid { grid-template-columns: 1fr 1fr; }
   .dashboard-hero { margin-top: 42px; }
+  .metric-kpi-grid { grid-template-columns: repeat(4, 1fr); }
   .workspace-grid { grid-template-columns: 1fr 1fr; }
   .task-form-panel { grid-column: 1 / -1; }
 }
@@ -355,6 +381,9 @@ button:disabled { opacity: 0.55; cursor: wait; transform: none; }
   .nav-link { padding: 0 9px; white-space: nowrap; font-size: 0.8125rem; }
   .dashboard-hero { align-items: start; flex-direction: column; margin-top: 28px; padding: 26px 20px; }
   .dashboard-grid { grid-template-columns: 1fr; }
+  .metric-kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .metric-grid { grid-template-columns: 1fr; }
+  .metric-panel { padding: 20px; }
   .workspace-grid { grid-template-columns: 1fr; }
   .task-form-panel { grid-column: auto; }
   .task-list-panel, .task-detail-panel, .task-form-panel, .my-tasks-panel, .admin-panel { padding: 20px; }
