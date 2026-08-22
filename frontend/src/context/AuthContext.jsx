@@ -14,7 +14,7 @@ export function AuthProvider({ children }) {
       setLoading(false)
       return
     }
-    api.get('/auth/me/')
+    api.get('/api/auth/me/')
       .then(({ data }) => setUser(data))
       .catch(() => localStorage.removeItem(TOKEN_KEY))
       .finally(() => setLoading(false))
@@ -47,8 +47,8 @@ export function AuthProvider({ children }) {
     user,
     loading,
     isAdmin: user?.role === 'ADMIN',
-    login: (credentials) => authenticate('/auth/login/', credentials),
-    register: (credentials) => authenticate('/auth/register/', credentials),
+    login: (credentials) => authenticate('/api/auth/login/', credentials),
+    register: (credentials) => authenticate('/api/auth/register/', credentials),
     loginWithGoogle: authenticateGoogle,
     logout: logoutUser,
   }
