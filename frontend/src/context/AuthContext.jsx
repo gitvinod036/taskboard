@@ -31,12 +31,12 @@ export function AuthProvider({ children }) {
   }
 
   async function authenticateGoogle(code) {
-    return authenticate('/auth/google/exchange/', { code })
+    return authenticate('/api/auth/google/exchange/', { code })
   }
 
   async function logoutUser() {
     try {
-      await api.post('/auth/logout/')
+      await api.post('/api/auth/logout/')
     } finally {
       localStorage.removeItem(TOKEN_KEY)
       setUser(null)
