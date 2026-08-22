@@ -3,7 +3,8 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.conf import settings
 from django.db import models, transaction
-from django.db.models import Count, Q
+from django.db.models import Count, Exists, OuterRef, Q, Subquery
+from django.db.models.functions import TruncDate
 from django.core.mail import send_mail
 from django.utils import timezone
 from django.core.exceptions import ImproperlyConfigured
@@ -448,3 +449,86 @@ class AdminUserTaskDeleteView(APIView):
 		if not deleted:
 			return Response({'detail': 'Assignment not found.'}, status=status.HTTP_404_NOT_FOUND)
 		return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AdminDashboardView(APIView):
+	permission_classes = [IsAdmin]
+
+	trend_days = 30
+	top_users_limit = 5
+	overdue_limit = 20
+
+	def get(self, request):
+		today = timezone.localdate()
+		approved = TaskSubmission.objects.filter(status=TaskSubmission.Status.APPROVED)
+		assignments = TaskAssignment.objects.annotate(
+			has_approved_submission=Exists(approved.filter(task=OuterRef('task'), user=OuterRef('user'))),
+			has_submission=Exists(TaskSubmission.objects.filter(task=OuterRef('task'), user=OuterRef('user'))),
+		)
+		open_assignments = assignments.filter(has_approved_submission=False)
+		overdue_assignments = open_assignments.filter(task__due_date__lt=today)
+		users = User.objects.filter(is_staff=False, is_superuser=False)
+		submission_totals = {row['status']: row['total'] for row in TaskSubmission.objects.values('status').annotate(total=Count('id'))}
+
+		return Response({
+			'generated_at': timezone.now(),
+			'summary': {
+				'total_tasks': Task.objects.count(),
+				'completed': submission_totals.get(TaskSubmission.Status.APPROVED, 0),
+				'in_progress': open_assignments.count(),
+				'pending_review': submission_totals.get(TaskSubmission.Status.PENDING, 0),
+				'overdue': overdue_assignments.count(),
+				'total_users': users.count(),
+				'active_users': users.filter(is_active=True).count(),
+			},
+			'status_distribution': {
+				'tasks': {
+					'total': Task.objects.count(),
+					'assigned': Task.objects.filter(assignments__isnull=False).distinct().count(),
+					'unassigned': Task.objects.filter(assignments__isnull=True).count(),
+				},
+				'assignments': {
+					'total': TaskAssignment.objects.count(),
+					'without_submission': assignments.filter(has_submission=False).count(),
+					'pending_review': submission_totals.get(TaskSubmission.Status.PENDING, 0),
+					'approved': submission_totals.get(TaskSubmission.Status.APPROVED, 0),
+					'rejected': submission_totals.get(TaskSubmission.Status.REJECTED, 0),
+				},
+			},
+			'technology_distribution': [
+				{'id': row['id'], 'name': row['name'], 'task_count': row['task_count']}
+				for row in TechStack.objects.annotate(task_count=Count('tasks')).order_by('-task_count', 'name').values('id', 'name', 'task_count')
+			],
+			'completion_trend': self.completion_trend(approved, today),
+			'top_users': [
+				{'id': row['id'], 'name': row['username'], 'assigned_count': row['assigned_count'], 'completed_count': row['completed_count']}
+				for row in users.annotate(
+					assigned_count=Count('task_assignments', distinct=True),
+					completed_count=Count('task_submissions', filter=Q(task_submissions__status=TaskSubmission.Status.APPROVED), distinct=True),
+				).order_by('-completed_count', '-assigned_count', 'username').values('id', 'username', 'assigned_count', 'completed_count')[:self.top_users_limit]
+			],
+			'overdue_tasks': self.overdue_tasks(overdue_assignments),
+		})
+
+	def completion_trend(self, approved, today):
+		start = today - timedelta(days=self.trend_days - 1)
+		totals = {
+			row['day']: row['total']
+			for row in approved.filter(reviewed_at__isnull=False, reviewed_at__date__gte=start).annotate(day=TruncDate('reviewed_at')).values('day').annotate(total=Count('id'))
+		}
+		return [{'date': start + timedelta(days=offset), 'completed': totals.get(start + timedelta(days=offset), 0)} for offset in range(self.trend_days)]
+
+	def overdue_tasks(self, overdue_assignments):
+		assignments = overdue_assignments.annotate(
+			submission_status=Subquery(TaskSubmission.objects.filter(task=OuterRef('task'), user=OuterRef('user')).values('status')[:1]),
+		).select_related('task', 'user').order_by('task__due_date', 'task_id', 'user_id')[:self.overdue_limit]
+		return [
+			{
+				'task_id': assignment.task_id,
+				'title': assignment.task.title,
+				'due_date': assignment.task.due_date,
+				'user': {'id': assignment.user_id, 'name': assignment.user.username},
+				'submission_status': assignment.submission_status,
+			}
+			for assignment in assignments
+		]
