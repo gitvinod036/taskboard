@@ -14,7 +14,14 @@ if not SECRET_KEY:
     if not DEBUG:
         raise ImproperlyConfigured('DJANGO_SECRET_KEY must be set when DJANGO_DEBUG is False.')
     SECRET_KEY = 'development-only-change-me'
-ALLOWED_HOSTS = [host.strip() for host in os.getenv('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if host.strip()]
+# ALLOWED_HOSTS = [host.strip() for host in os.getenv('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if host.strip()]
+ALLOWED_HOSTS = [
+    "localhost",
+    "127.0.0.1",
+    "taskboard-x6ef.onrender.com",
+]
+if os.getenv("ALLOWED_HOSTS"):
+    ALLOWED_HOSTS += os.getenv("ALLOWED_HOSTS").split(",")
 
 INSTALLED_APPS = [
     'django.contrib.admin',
