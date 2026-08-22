@@ -3,7 +3,8 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.conf import settings
 from django.db import models, transaction
-from django.db.models import Count, Q
+from django.db.models import Count, DateTimeField, Exists, F, OuterRef, Q
+from django.db.models.functions import Coalesce, TruncWeek
 from django.core.mail import send_mail
 from django.utils import timezone
 from django.core.exceptions import ImproperlyConfigured
@@ -448,3 +449,168 @@ class AdminUserTaskDeleteView(APIView):
 		if not deleted:
 			return Response({'detail': 'Assignment not found.'}, status=status.HTTP_404_NOT_FOUND)
 		return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AdminDashboardView(APIView):
+	"""Aggregated workspace metrics for the admin dashboard.
+
+	All figures are computed server-side from real records so the frontend never
+	downloads or aggregates large task lists itself.
+	"""
+
+	permission_classes = [IsAdmin]
+
+	def get(self, request):
+		today = timezone.localdate()
+		member_users = Q(is_staff=False, is_superuser=False)
+
+		total_tasks = Task.objects.count()
+		completed_count = TaskSubmission.objects.filter(status=TaskSubmission.Status.APPROVED).count()
+		pending_review_count = TaskSubmission.objects.filter(status=TaskSubmission.Status.PENDING).count()
+
+		# A task stays "in progress" while its assignment has no pending or
+		# approved submission (never submitted, or the last one was rejected).
+		settled_submission = TaskSubmission.objects.filter(
+			task=OuterRef('task'),
+			user=OuterRef('user'),
+			status__in=(TaskSubmission.Status.PENDING, TaskSubmission.Status.APPROVED),
+		)
+		in_progress_count = (
+			TaskAssignment.objects
+			.annotate(is_settled=Exists(settled_submission))
+			.filter(is_settled=False)
+			.count()
+		)
+
+		approved_submission = TaskSubmission.objects.filter(task=OuterRef('pk'), status=TaskSubmission.Status.APPROVED)
+		overdue_tasks = (
+			Task.objects
+			.filter(due_date__lt=today)
+			.annotate(is_completed=Exists(approved_submission))
+			.filter(is_completed=False)
+			.order_by('due_date', 'id')
+		)
+		overdue_items = [
+			{
+				'id': task.id,
+				'title': task.title,
+				'due_date': task.due_date,
+				'days_overdue': (today - task.due_date).days,
+			}
+			for task in overdue_tasks[:8]
+		]
+
+		total_users = User.objects.filter(member_users).count()
+		participates = (
+			Exists(TaskAssignment.objects.filter(user=OuterRef('pk')))
+			| Exists(TaskSubmission.objects.filter(user=OuterRef('pk')))
+		)
+		active_users = (
+			User.objects
+			.filter(member_users)
+			.annotate(has_participation=participates)
+			.filter(has_participation=True)
+			.count()
+		)
+
+		status_distribution = [
+			{'key': 'COMPLETED', 'label': 'Completed', 'count': completed_count},
+			{'key': 'IN_PROGRESS', 'label': 'In Progress', 'count': in_progress_count},
+			{'key': 'PENDING_REVIEW', 'label': 'Pending Review', 'count': pending_review_count},
+		]
+
+		# Weekly completions over the trailing eight weeks. A task counts as
+		# completed when it was approved; reviewed_at marks that moment and
+		# submitted_at is the fallback for approvals without a stored review.
+		trend_start = today - timedelta(days=today.weekday()) - timedelta(weeks=7)
+		trend_rows = (
+			TaskSubmission.objects
+			.filter(status=TaskSubmission.Status.APPROVED)
+			.annotate(
+				completion_time=Coalesce('reviewed_at', 'submitted_at', output_field=DateTimeField()),
+			)
+			.filter(completion_time__date__gte=trend_start)
+			.annotate(week_start=TruncWeek('completion_time'))
+			.values('week_start')
+			.annotate(completions=Count('id'))
+		)
+		completions_by_week = {row['week_start'].date(): row['completions'] for row in trend_rows}
+		completion_trend = []
+		week_cursor = trend_start
+		while week_cursor <= today - timedelta(days=today.weekday()):
+			completion_trend.append({
+				'week_start': week_cursor.isoformat(),
+				'completions': completions_by_week.get(week_cursor, 0),
+			})
+			week_cursor += timedelta(weeks=1)
+
+		top_users = (
+			User.objects
+			.filter(member_users)
+			.annotate(
+				completed_tasks=Count('task_submissions', filter=Q(task_submissions__status=TaskSubmission.Status.APPROVED)),
+			)
+			.filter(completed_tasks__gt=0)
+			.order_by('-completed_tasks', 'id')[:5]
+		)
+
+		technology_distribution = [
+			{'technology': stack['name'], 'task_count': stack['task_count']}
+			for stack in TechStack.objects
+			.annotate(task_count=Count('tasks'))
+			.order_by('-task_count', 'name')
+			.values('name', 'task_count')
+		]
+
+		events = []
+		for assignment in TaskAssignment.objects.select_related('task', 'user').order_by('-assigned_date')[:10]:
+			events.append({'type': 'ASSIGNMENT', 'actor': assignment.user.username, 'task_title': assignment.task.title, 'timestamp': assignment.assigned_date})
+		for submission in TaskSubmission.objects.select_related('task', 'user', 'reviewed_by').order_by('-submitted_at')[:10]:
+			events.append({'type': 'SUBMISSION', 'actor': submission.user.username, 'task_title': submission.task.title, 'timestamp': submission.submitted_at})
+			if submission.reviewed_at and submission.reviewed_by:
+				events.append({'type': 'REVIEW', 'actor': submission.reviewed_by.username, 'task_title': submission.task.title, 'timestamp': submission.reviewed_at})
+		events.sort(key=lambda event: event['timestamp'], reverse=True)
+		recent_activity = [
+			{'type': event['type'], 'actor': event['actor'], 'task_title': event['task_title'], 'timestamp': event['timestamp']}
+			for event in events[:10]
+		]
+
+		return Response({
+			'totals': {
+				'total_tasks': total_tasks,
+				'completed': completed_count,
+				'in_progress': in_progress_count,
+				'pending_review': pending_review_count,
+				'overdue': overdue_tasks.count(),
+				'total_users': total_users,
+				'active_users': active_users,
+			},
+			'status_distribution': status_distribution,
+			'priority_distribution': {
+				'supported': False,
+				'message': 'NOT CURRENTLY SUPPORTED BY DATA MODEL',
+				'distribution': None,
+			},
+			'completion_trend': {
+				'period_weeks': 8,
+				'points': completion_trend,
+			},
+			'top_users': [
+				{
+					'id': user.id,
+					'username': user.username,
+					'name': user.get_full_name() or user.username,
+					'completed_tasks': user.completed_tasks,
+				}
+				for user in top_users
+			],
+			'overdue_tasks': {
+				'total': overdue_tasks.count(),
+				'items': overdue_items,
+			},
+			'technology_distribution': technology_distribution,
+			'recent_activity': recent_activity,
+		})
+
+
+
