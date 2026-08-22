@@ -110,7 +110,7 @@ else:
         "http://127.0.0.1:5174",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "https://taskboard-git-main-gitvinod036s-projects.vercel.app",
+        "https://taskboard-puce-two.vercel.app",
     ]
 CORS_ALLOW_CREDENTIALS = True
 GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', '')
@@ -164,13 +164,7 @@ if not DEBUG:
     X_FRAME_OPTIONS = 'DENY'
 
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "https://taskboard-puce-two.vercel.app",
-]
-
 CSRF_TRUSTED_ORIGINS = [
     "https://taskboard-x6ef.onrender.com",
-    "https://taskboard-git-main-gitvinod036s-projects.vercel.app",
+    "https://taskboard-puce-two.vercel.app",
 ]

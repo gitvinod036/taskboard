@@ -146,15 +146,7 @@ export default function TaskBoard() {
         {isAdmin && <form className="task-form-panel surface-panel" onSubmit={saveTask}><p className="section-kicker">Admin tools</p><h2>{editingId ? 'Edit task' : 'Create task'}</h2><label htmlFor="task-title">Title<input id="task-title" required maxLength="200" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} /></label><label htmlFor="task-description">Description<textarea id="task-description" required rows="5" value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label><label htmlFor="task-due-date">Due date <span className="optional">(optional)</span><input id="task-due-date" type="date" value={form.due_date} onChange={(event) => setForm({ ...form, due_date: event.target.value })} /></label><div className="form-actions"><button type="submit" disabled={saving} aria-busy={saving}>{saving ? 'Saving...' : editingId ? 'Save changes' : 'Create task'}</button>{editingId && <button type="button" className="button-muted" onClick={startCreate}>Cancel</button>}</div></form>}
       </div>
       {!isAdmin && (() => {
-        // const filteredMyTasks = selectedStacks.length
-        //   ? myTasks.filter((a) =>
-        //       selectedStacks.every((s) =>
-        //         a.task.tech_stack.some(
-        //           (t) => t.trim().toLowerCase() === s.trim().toLowerCase()
-        //         )
-        //       )
-        //     )
-        //   : myTasks
+
         const filteredMyTasks = selectedStacks.length
   ? myTasks.filter((a) => {
       const taskTechStacks = Array.isArray(a.task.tech_stack)
