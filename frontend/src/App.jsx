@@ -1,3 +1,5 @@
+import { lazy, Suspense } from 'react'
+
 import { AuthProvider } from './context/AuthContext'
 import Dashboard from './pages/Dashboard'
 import Login from './pages/Login'
@@ -7,9 +9,13 @@ import AdminAssignments from './pages/AdminAssignments'
 import AdminSubmissions from './pages/AdminSubmissions'
 import AdminUsers from './pages/AdminUsers'
 import ProtectedRoute from './routes/ProtectedRoute'
+import SessionLoader from './components/SessionLoader'
 import ForgotPassword from './pages/ForgotPassword'
 import ResetPassword from './pages/ResetPassword'
 import OAuthCallback from './pages/OAuthCallback'
+
+// Code-split admin analytics page; only fetched when /admin/monitoring opens.
+const AdminMonitoring = lazy(() => import('./pages/AdminMonitoring'))
 
 function App() {
   const path = window.location.pathname
@@ -28,6 +34,8 @@ function App() {
         ? <ProtectedRoute adminOnly><AdminAssignments /></ProtectedRoute>
       : path === '/admin/submissions'
         ? <ProtectedRoute adminOnly><AdminSubmissions /></ProtectedRoute>
+      : path === '/admin/monitoring'
+        ? <ProtectedRoute adminOnly><Suspense fallback={<SessionLoader />}><AdminMonitoring /></Suspense></ProtectedRoute>
       : path === '/dashboard'
         ? <ProtectedRoute><Dashboard /></ProtectedRoute>
         : path === '/tasks'

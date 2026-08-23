@@ -12,7 +12,7 @@ export default function WorkspaceNav({ active = 'tasks' }) {
     { href: '/dashboard', label: 'Dashboard', key: 'dashboard' },
     { href: '/tasks', label: 'Tasks', key: 'tasks' },
     ...(!isAdmin ? [{ href: '/tasks#my-tasks', label: 'My tasks', key: 'my-tasks' }] : []),
-    ...(isAdmin ? [{ href: '/admin/users', label: 'Users', key: 'users' }, { href: '/admin/assignments', label: 'Assignments', key: 'assignments' }, { href: '/admin/submissions', label: 'Submissions', key: 'submissions' }] : []),
+    ...(isAdmin ? [{ href: '/admin/users', label: 'Users', key: 'users' }, { href: '/admin/assignments', label: 'Assignments', key: 'assignments' }, { href: '/admin/submissions', label: 'Submissions', key: 'submissions' }, { href: '/admin/monitoring', label: 'Monitoring', key: 'monitoring' }] : []),
   ]
 
   return (
