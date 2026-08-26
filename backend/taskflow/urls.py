@@ -1,6 +1,6 @@
 from django.urls import path
 
-from .views import AdminCheckView, GoogleCallbackView, GoogleLoginView, GoogleTokenExchangeView, LoginView, LogoutView, MeView, PasswordResetConfirmView, PasswordResetRequestView, RegisterView
+from .views import AdminCheckView, GoogleCallbackView, GoogleLoginView, GoogleTokenExchangeView, LoginView, LogoutView, MeTechStackView, MeView, PasswordResetConfirmView, PasswordResetRequestView, RegisterView
 
 app_name = 'taskflow'
 
@@ -14,6 +14,7 @@ urlpatterns = [
 	path('password-reset-confirm/', PasswordResetConfirmView.as_view(), name='password-reset-confirm'),
 	path('logout/', LogoutView.as_view(), name='logout'),
 	path('me/', MeView.as_view(), name='me'),
+	path('me/tech-stack/', MeTechStackView.as_view(), name='me-tech-stack'),
 	path('admin-check/', AdminCheckView.as_view(), name='admin-check'),
 ]
 

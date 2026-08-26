@@ -5,6 +5,7 @@ import api from '../services/api'
 import WorkspaceNav from '../components/WorkspaceNav'
 import TechStackChip from '../components/atoms/TechStackChip'
 import TechStackFilter from '../components/molecules/TechStackFilter'
+import Pagination from '../components/Pagination'
 
 export default function AdminUsers() {
   const [users, setUsers] = useState([])
@@ -17,18 +18,20 @@ export default function AdminUsers() {
   const [techStacks, setTechStacks] = useState([])
   const [selectedStacks, setSelectedStacks] = useState([])
   const [search, setSearch] = useState('')
-  const [editingStacks, setEditingStacks] = useState([])
-  const [savingStacks, setSavingStacks] = useState(false)
+  const [page, setPage] = useState(1)
+  const [pagination, setPagination] = useState({ count: 0, next: null, previous: null })
 
-  async function loadUsers() {
+  async function loadUsers(pageNumber = page) {
     setLoading(true)
     setError('')
     try {
-      const params = {}
+      // Paginated endpoint: search/filter apply before the page slice.
+      const params = { page: pageNumber }
       if (search.trim()) params.search = search.trim()
       if (selectedStacks.length) params.tech_stack = selectedStacks.join(',')
       const { data } = await api.get('/admin/users/', { params })
-      setUsers(Array.isArray(data) ? data : [])
+      setUsers(Array.isArray(data?.results) ? data.results : [])
+      setPagination({ count: data?.count ?? 0, next: data?.next ?? null, previous: data?.previous ?? null })
       if (selectedUser) {
         loadUser(selectedUser.id)
       }
@@ -53,7 +56,6 @@ export default function AdminUsers() {
     try {
       const { data } = await api.get(`/admin/users/${userId}/`)
       setSelectedUser(data)
-      setEditingStacks(data?.tech_stack || [])
     } catch {
       setError('User details could not be loaded.')
     } finally {
@@ -68,32 +70,23 @@ export default function AdminUsers() {
   useEffect(() => {
     const timer = setTimeout(loadUsers, 250)
     return () => clearTimeout(timer)
-  }, [search, selectedStacks])
+  }, [search, selectedStacks, page])
 
   function selectStacks(next) {
     setSelectedStacks(next)
     setSelectedUser(null)
+    if (page !== 1) setPage(1) // filter change always restarts at page 1
   }
 
   function clearFilters() {
     setSearch('')
     setSelectedStacks([])
+    if (page !== 1) setPage(1)
   }
 
-  async function saveTechStacks() {
-    if (!selectedUser) return
-    setSavingStacks(true)
-    setError('')
-    try {
-      const { data } = await api.patch(`/admin/users/${selectedUser.id}/`, { tech_stack: editingStacks })
-      setSelectedUser(data)
-      setNotice('Tech stack updated.')
-      await loadUsers()
-    } catch (requestError) {
-      setError(requestError.response?.data?.tech_stack?.[0] || 'Tech stack could not be updated.')
-    } finally {
-      setSavingStacks(false)
-    }
+  function changeSearch(next) {
+    setSearch(next)
+    if (page !== 1) setPage(1)
   }
 
   async function deleteUser(target) {
@@ -143,7 +136,7 @@ export default function AdminUsers() {
           aria-label="Search users"
           placeholder="Search users..."
           value={search}
-          onChange={(event) => setSearch(event.target.value)}
+          onChange={(event) => changeSearch(event.target.value)}
         />
         <TechStackFilter
           options={techStacks}
@@ -162,7 +155,7 @@ export default function AdminUsers() {
       </section>
 
       <p className="results-count">
-        {loading ? 'Loading users...' : `${users.length} users found`}
+        {loading ? 'Loading users...' : `${pagination.count} users found`}
       </p>
 
       <div className="admin-grid">
@@ -172,7 +165,7 @@ export default function AdminUsers() {
               <p className="section-kicker">Directory</p>
               <h2>Normal users</h2>
             </div>
-            <span className="panel-count">{users.length}</span>
+            <span className="panel-count">{pagination.count}</span>
           </div>
 
           {loading && <p className="state-message">Loading users...</p>}
@@ -205,6 +198,16 @@ export default function AdminUsers() {
               </button>
             ))}
           </div>
+          {!loading && (
+            <Pagination
+              currentPage={page}
+              hasNext={Boolean(pagination.next)}
+              hasPrevious={Boolean(pagination.previous)}
+              disabled={loading}
+              onNext={() => setPage((current) => current + 1)}
+              onPrevious={() => setPage((current) => Math.max(1, current - 1))}
+            />
+          )}
         </section>
 
         <section className="admin-panel surface-panel">
@@ -235,22 +238,6 @@ export default function AdminUsers() {
                   onClick={() => deleteUser(selectedUser)}
                 >
                   {pending === `delete-${selectedUser.id}` ? 'Deleting...' : 'Delete user'}
-                </button>
-              </div>
-
-              <div className="stack-editor">
-                <TechStackFilter
-                  options={techStacks}
-                  selected={editingStacks}
-                  onChange={setEditingStacks}
-                  loading={!techStacks.length}
-                />
-                <button
-                  type="button"
-                  onClick={saveTechStacks}
-                  disabled={savingStacks}
-                >
-                  {savingStacks ? 'Saving...' : 'Save tech stack'}
                 </button>
               </div>
 

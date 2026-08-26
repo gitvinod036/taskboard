@@ -1,6 +1,12 @@
 from django.urls import path
 
-from .views import AdminAssignmentsView, AdminDashboardView, AdminSubmissionReviewView, AdminSubmissionsView, AdminTechStacksView, AdminUserDetailView, AdminUserTaskDeleteView, AdminUserTasksView, AdminUsersView
+from .views import (
+    AdminAssignmentsView, AdminCodeSubmissionDetailView, AdminCodingProblemDetailView,
+    AdminCodingProblemsView, AdminCodingSubmissionsView, AdminDashboardView,
+    AdminSubmissionReviewView, AdminSubmissionsView, AdminTechStacksView,
+    AdminUserDetailView, AdminUserTaskDeleteView, AdminUserTasksView,
+    AdminUsersView, CodingProblemGenerateView,
+)
 
 urlpatterns = [
 	path('users/', AdminUsersView.as_view(), name='admin-users'),
@@ -12,4 +18,9 @@ urlpatterns = [
 	path('assignments/', AdminAssignmentsView.as_view(), name='admin-assignments'),
 	path('submissions/', AdminSubmissionsView.as_view(), name='admin-submissions'),
 	path('submissions/<int:submission_id>/', AdminSubmissionReviewView.as_view(), name='admin-submission-review'),
+	path('coding/problems/', AdminCodingProblemsView.as_view(), name='admin-coding-problems'),
+	path('coding/problems/<int:problem_id>/', AdminCodingProblemDetailView.as_view(), name='admin-coding-problem-detail'),
+	path('coding/problems/generate/', CodingProblemGenerateView.as_view(), name='admin-coding-problem-generate'),
+	path('coding/submissions/', AdminCodingSubmissionsView.as_view(), name='admin-coding-submissions'),
+	path('coding/submissions/<int:submission_id>/', AdminCodeSubmissionDetailView.as_view(), name='admin-coding-submission-detail'),
 ]

@@ -112,11 +112,27 @@ else:
         "http://127.0.0.1:3000",
         "https://taskboard-puce-two.vercel.app",
     ]
-CORS_ALLOW_CREDENTIALS = True
+# Only explicitly allowlisted origins may call the API. Origins come from the
+# CORS_ALLOWED_ORIGINS env var (see .env.example); local development defaults
+# are kept below for convenience. Never re-enable CORS_ALLOW_ALL_ORIGINS.
+#
+# CORS_ALLOW_CREDENTIALS is intentionally False: the API uses DRF
+# TokenAuthentication via the Authorization header, so browsers never need to
+# send cookies cross-origin.
+CORS_ALLOW_CREDENTIALS = False
+# django-cors-headers matches origins on exact scheme+host+port, and answers a
+# preflight with 200 *without* any Access-Control-Allow-Origin when the origin
+# is not matched. The browser then blocks the actual GET with a CORS error even
+# though OPTIONS looked fine. Local dev servers (e.g. Vite) silently move to
+# another free port when 5173 is taken, so allow any localhost/127.0.0.1 port;
+# non-local origins still require an exact entry in CORS_ALLOWED_ORIGINS.
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^http://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$",
+]
 GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', '')
 GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET', '')
 GOOGLE_REDIRECT_URI = os.getenv('GOOGLE_REDIRECT_URI', 'http://127.0.0.1:8000/api/auth/google/callback/')
-FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5174')
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 GOOGLE_OAUTH_STATE_MAX_AGE = int(os.getenv('GOOGLE_OAUTH_STATE_MAX_AGE', '600'))
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'no-reply@taskboard.local')
 if DEBUG:
@@ -128,6 +144,11 @@ EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
 EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True').lower() == 'true'
+
+# --- AI generation (server-side only; never exposed to the frontend) ---
+AI_API_KEY = os.getenv('AI_API_KEY', '')
+AI_MODEL = os.getenv('AI_MODEL', 'gemini-2.5-flash')
+AI_BASE_URL = os.getenv('AI_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta/models')
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.TokenAuthentication',
@@ -167,4 +188,8 @@ if not DEBUG:
 CSRF_TRUSTED_ORIGINS = [
     "https://taskboard-x6ef.onrender.com",
     "https://taskboard-puce-two.vercel.app",
+]
+
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^http://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
 ]

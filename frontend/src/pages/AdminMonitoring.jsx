@@ -107,7 +107,9 @@ export default function AdminMonitoring() {
         if (cancelled) return
         const payload = {
           dashboard: dashboardResponse.data && typeof dashboardResponse.data === 'object' ? dashboardResponse.data : {},
-          submissions: asList(submissionsResponse.data),
+          // /admin/submissions/ is paginated; aggregate over the current page
+          // only. Full-list aggregation remains a future backend optimization.
+          submissions: asList(submissionsResponse.data?.results),
         }
         dataRef.current = payload
         setData(payload)

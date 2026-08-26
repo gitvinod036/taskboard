@@ -61,8 +61,8 @@ class TaskAssignmentTests(TestCase):
 		self.authenticate(self.user1)
 		response = self.client.get('/api/my/tasks/')
 		self.assertEqual(response.status_code, 200)
-		self.assertEqual(len(response.data), 1)
-		self.assertEqual(response.data[0]['task']['title'], 'Private to user 1')
+		self.assertEqual(len(response.data['results']), 1)
+		self.assertEqual(response.data['results'][0]['task']['title'], 'Private to user 1')
 		self.assertNotIn('Shared task', str(response.data))
 
 	def test_task_remains_visible_and_reports_current_assignment(self):
@@ -70,12 +70,12 @@ class TaskAssignmentTests(TestCase):
 		self.authenticate(self.user1)
 		response = self.client.get('/api/tasks/')
 		self.assertEqual(response.status_code, 200)
-		self.assertEqual(response.data[0]['title'], 'Task A')
-		self.assertFalse(response.data[0]['is_assigned'])
+		self.assertEqual(response.data['results'][0]['title'], 'Task A')
+		self.assertFalse(response.data['results'][0]['is_assigned'])
 
 		self.client.post(f'/api/tasks/{self.task.id}/assign/', {})
 		response = self.client.get('/api/tasks/')
-		self.assertTrue(response.data[0]['is_assigned'])
+		self.assertTrue(response.data['results'][0]['is_assigned'])
 
 	def test_admin_cannot_use_user_assignment_endpoints(self):
 		self.authenticate(self.admin)
@@ -124,13 +124,13 @@ class MyTasksTechStackTests(TestCase):
 	def _get_my_tasks(self):
 		response = self.client.get('/api/my/tasks/')
 		self.assertEqual(response.status_code, 200)
-		return {item['task']['title']: item['task']['tech_stack'] for item in response.data}
+		return {item['task']['title']: item['task']['tech_stack'] for item in response.data['results']}
 
 	def test_my_tasks_response_includes_tech_stack_field_on_every_task(self):
 		"""Every item in /my/tasks/ must have a tech_stack list on its task."""
 		response = self.client.get('/api/my/tasks/')
 		self.assertEqual(response.status_code, 200)
-		for item in response.data:
+		for item in response.data['results']:
 			self.assertIn('tech_stack', item['task'])
 			self.assertIsInstance(item['task']['tech_stack'], list)
 
@@ -149,7 +149,7 @@ class MyTasksTechStackTests(TestCase):
 
 		response = self.client.get('/api/my/tasks/')
 		self.assertEqual(response.status_code, 200)
-		titles = [item['task']['title'] for item in response.data]
+		titles = [item['task']['title'] for item in response.data['results']]
 		self.assertNotIn('Other user task', titles)
 		self.assertEqual(len(titles), 3)  # only the three tasks assigned to self.user
 

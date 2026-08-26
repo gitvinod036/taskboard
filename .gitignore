@@ -43,3 +43,4 @@ staticfiles/
 # Node
 node_modules/
 dist/
+.aider*

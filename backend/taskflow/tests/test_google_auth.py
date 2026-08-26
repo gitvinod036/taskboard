@@ -26,11 +26,15 @@ class GoogleAuthTests(TestCase):
     @patch('taskflow.views.google_flow')
     def test_google_login_initiation_redirects_and_stores_state(self, flow_factory):
         flow = flow_factory.return_value
+        # The view persists the PKCE verifier in the session, which must be a
+        # JSON-serializable string (real flows always use a str).
+        flow.code_verifier = 'pkce-verifier-123'
         flow.authorization_url.return_value = ('https://accounts.google.com/auth', 'state-123')
         response = self.client.get('/api/auth/google/')
         self.assertEqual(response.status_code, 302)
         self.assertIn('accounts.google.com', response['Location'])
         self.assertEqual(self.client.session['google_oauth_state'], 'state-123')
+        self.assertEqual(self.client.session['google_oauth_code_verifier'], 'pkce-verifier-123')
 
     def test_invalid_state_redirects_without_authentication(self):
         response = self.client.get('/api/auth/google/callback/?state=wrong&code=code')
@@ -80,3 +84,30 @@ class GoogleAuthTests(TestCase):
         self.assertEqual(self.client.post('/api/auth/google/exchange/', {'code': raw_code}, format='json').status_code, 400)
         code.refresh_from_db()
         self.assertIsNotNone(code.used_at)
+
+    @override_settings(
+        GOOGLE_CLIENT_ID='',
+        GOOGLE_CLIENT_SECRET='',
+        FRONTEND_URL='http://localhost:5173',
+    )
+    def test_unconfigured_google_login_redirects_to_frontend_login(self):
+        """Regression: with missing credentials the flow must bounce to the
+        configured FRONTEND_URL /login page (correct dev port), carrying an
+        oauth_error message — never to a dead origin."""
+        with override_settings(FRONTEND_URL='http://localhost:5173'):
+            response = self.client.get('/api/auth/google/')
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            urlparse(response['Location']).scheme + '://' + urlparse(response['Location']).netloc,
+            'http://localhost:5173',
+        )
+        self.assertEqual(urlparse(response['Location']).path, '/login')
+        self.assertIn('oauth_error', parse_qs(urlparse(response['Location']).query))
+
+    def test_oauth_callback_redirects_to_configured_frontend_origin(self):
+        """The one-time-code handoff must land on FRONTEND_URL/oauth/callback."""
+        with override_settings(FRONTEND_URL='http://localhost:5173'):
+            response = self.client.get('/api/auth/google/callback/?state=wrong&code=code')
+        location = urlparse(response['Location'])
+        self.assertEqual(f'{location.scheme}://{location.netloc}/oauth/callback'.rstrip('/'),
+                         'http://localhost:5173/oauth/callback')

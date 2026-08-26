@@ -8,11 +8,12 @@ export default function WorkspaceNav({ active = 'tasks' }) {
     window.location.replace('/login')
   }
 
-  const links = [
+    const links = [
     { href: '/dashboard', label: 'Dashboard', key: 'dashboard' },
     { href: '/tasks', label: 'Tasks', key: 'tasks' },
-    ...(!isAdmin ? [{ href: '/tasks#my-tasks', label: 'My tasks', key: 'my-tasks' }] : []),
-    ...(isAdmin ? [{ href: '/admin/users', label: 'Users', key: 'users' }, { href: '/admin/assignments', label: 'Assignments', key: 'assignments' }, { href: '/admin/submissions', label: 'Submissions', key: 'submissions' }, { href: '/admin/monitoring', label: 'Monitoring', key: 'monitoring' }] : []),
+    ...(!isAdmin ? [{ href: '/my-tasks', label: 'My tasks', key: 'my-tasks' }] : []),
+    ...(!isAdmin ? [{ href: '/coding/problems', label: 'Coding Problems', key: 'coding' }] : []),
+    ...(isAdmin ? [{ href: '/admin/users', label: 'Users', key: 'users' }, { href: '/admin/assignments', label: 'Assignments', key: 'assignments' }, { href: '/admin/submissions', label: 'Submissions', key: 'submissions' }, { href: '/admin/coding/problems', label: 'Coding', key: 'coding' }, { href: '/admin/coding/submissions', label: 'Code Reviews', key: 'coding-submissions' }, { href: '/admin/monitoring', label: 'Monitoring', key: 'monitoring' }] : []),
   ]
 
   return (

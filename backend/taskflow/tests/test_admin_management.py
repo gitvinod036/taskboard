@@ -1,3 +1,5 @@
+import re
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.authtoken.models import Token
@@ -30,7 +32,7 @@ class AdminManagementTests(TestCase):
 		self.authenticate(self.admin)
 		list_response = self.client.get('/api/admin/users/')
 		self.assertEqual(list_response.status_code, 200)
-		user_data = next(item for item in list_response.data if item['id'] == self.user1.id)
+		user_data = next(item for item in list_response.data['results'] if item['id'] == self.user1.id)
 		self.assertEqual(user_data['name'], 'user1')
 		self.assertEqual(user_data['assigned_task_count'], 1)
 		self.assertNotIn('password', user_data)
@@ -93,8 +95,11 @@ class AdminManagementTests(TestCase):
 	def test_unauthenticated_and_missing_resources_are_rejected(self):
 		self.assertEqual(self.client.get('/api/admin/users/').status_code, 401)
 		self.authenticate(self.admin)
-		self.assertEqual(self.client.get('/api/admin/users/999/').status_code, 404)
-		self.assertEqual(self.client.get('/api/admin/users/999/tasks/').status_code, 404)
+		# Never assume a literal id is unused: kept test databases carry ids
+		# forward across runs, so derive one that cannot exist.
+		missing_user_id = User.objects.order_by('-id').values_list('id', flat=True).first() + 1_000_000
+		self.assertEqual(self.client.get(f'/api/admin/users/{missing_user_id}/').status_code, 404)
+		self.assertEqual(self.client.get(f'/api/admin/users/{missing_user_id}/tasks/').status_code, 404)
 		self.assertEqual(self.client.delete(f'/api/admin/users/{self.user1.id}/tasks/999/').status_code, 404)
 
 	def test_admin_can_update_and_retrieve_user_tech_stack(self):
@@ -119,11 +124,11 @@ class AdminManagementTests(TestCase):
 		self.authenticate(self.admin)
 		response = self.client.get('/api/admin/users/?tech_stack=React')
 		self.assertEqual(response.status_code, 200)
-		self.assertCountEqual([item['name'] for item in response.data], ['user1', 'user2'])
+		self.assertCountEqual([item['name'] for item in response.data['results']], ['user1', 'user2'])
 		response = self.client.get('/api/admin/users/?tech_stack=React,Python')
 		self.assertEqual(response.status_code, 200)
-		self.assertEqual([item['name'] for item in response.data], ['user1'])
-		self.assertEqual(self.client.get('/api/admin/users/?tech_stack=Rust').data, [])
+		self.assertEqual([item['name'] for item in response.data['results']], ['user1'])
+		self.assertEqual(self.client.get('/api/admin/users/?tech_stack=Rust').data['results'], [])
 
 	def test_normal_user_cannot_filter_or_update_user_tech_stack(self):
 		self.authenticate(self.user1)
@@ -137,3 +142,115 @@ class AdminManagementTests(TestCase):
 		self.assertEqual(response.status_code, 200)
 		self.assertNotIn('password', str(response.data))
 		self.assertNotIn('token', str(response.data))
+
+
+class AdminQueryEfficiencyTests(TestCase):
+	"""Regression guards for the admin serializer N+1 fixes."""
+
+	def setUp(self):
+		self.client = APIClient()
+		self.admin = User.objects.create_superuser(username='admin', password='StrongPassword!42', email='admin@example.com')
+		# Five members with varying assignments and tech stacks make any
+		# per-user query pattern visible.
+		self.members = [
+			User.objects.create_user(username=f'member{index}', password='StrongPassword!42', email=f'm{index}@example.com')
+			for index in range(5)
+		]
+		self.tasks = [Task.objects.create(title=f'Task {index}', description='D') for index in range(6)]
+		for index, member in enumerate(self.members):
+			for task_index in range(index):  # member0:0, member1:1, ... member4:4
+				TaskAssignment.objects.create(user=member, task=self.tasks[task_index])
+		for name in ('React', 'Python', 'Django'):
+			TechStack.objects.get_or_create(name=name)
+		UserTechStack.objects.create(user=self.members[0], tech_stack=TechStack.objects.get(name='React'))
+		UserTechStack.objects.create(user=self.members[1], tech_stack=TechStack.objects.get(name='React'))
+		UserTechStack.objects.create(user=self.members[1], tech_stack=TechStack.objects.get(name='Python'))
+		# members[2..4] have no stacks at all.
+
+	def authenticate(self, user):
+		token, _ = Token.objects.get_or_create(user=user)
+		self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+
+	def test_admin_users_returns_correct_counts_and_stacks_without_n_plus_one(self):
+		from django.db import connection
+		from django.test.utils import CaptureQueriesContext
+
+		self.authenticate(self.admin)
+		with CaptureQueriesContext(connection) as captured:
+			response = self.client.get('/api/admin/users/')
+		self.assertEqual(response.status_code, 200)
+		data = {item['id']: item for item in response.data['results']}
+		self.assertEqual(data[self.members[0].id]['assigned_task_count'], 0)
+		self.assertEqual(data[self.members[3].id]['assigned_task_count'], 3)
+		self.assertCountEqual(data[self.members[1].id]['tech_stack'], ['React', 'Python'])
+		self.assertEqual(data[self.members[2].id]['tech_stack'], [])
+
+		sql_statements = [query['sql'] for query in captured.captured_queries]
+		# Exactly ONE prefetch query fetches all users' stacks; more means a
+		# per-user tech-stack N+1 has regressed.
+		stack_queries = [sql for sql in sql_statements if 'taskflow_usertechstack' in sql]
+		self.assertEqual(len(stack_queries), 1)
+		# At most two COUNT-containing queries are legitimate: the annotated
+		# users-list query itself plus the paginator's COUNT. Any third means
+		# a per-user COUNT N+1 has regressed.
+		count_queries = [sql for sql in sql_statements if 'COUNT' in sql.upper()]
+		self.assertLessEqual(len(count_queries), 2)
+
+	def test_admin_users_tech_stack_filtering_and_search_still_work(self):
+		self.authenticate(self.admin)
+		response = self.client.get('/api/admin/users/?tech_stack=React')
+		self.assertEqual(response.status_code, 200)
+		self.assertCountEqual([item['name'] for item in response.data['results']], ['member0', 'member1'])
+		for item in response.data['results']:  # counts stay correct under filtering
+			expected = int(item['name'].replace('member', ''))
+			self.assertEqual(item['assigned_task_count'], expected)
+
+		response = self.client.get('/api/admin/users/?search=member3')
+		self.assertEqual([item['name'] for item in response.data['results']], ['member3'])
+		self.assertEqual(response.data['results'][0]['assigned_task_count'], 3)
+
+	def test_admin_assignments_nested_user_data_without_n_plus_one(self):
+		from django.db import connection
+		from django.test.utils import CaptureQueriesContext
+
+		# Two stacks on one task: the optional m2m filter join would multiply
+		# rows and inflate a non-distinct COUNT annotation.
+		self.tasks[0].tech_stack.set([
+			TechStack.objects.get(name='React'),
+			TechStack.objects.get(name='Python'),
+		])
+
+		self.authenticate(self.admin)
+		with CaptureQueriesContext(connection) as captured:
+			response = self.client.get('/api/admin/assignments/')
+		self.assertEqual(response.status_code, 200)
+		nested_by_user = {}
+		for item in response.data['results']:
+			nested_by_user.setdefault(item['user']['id'], item['user'])
+		self.assertEqual(nested_by_user[self.members[3].id]['assigned_task_count'], 3)
+		self.assertCountEqual(nested_by_user[self.members[1].id]['tech_stack'], ['React', 'Python'])
+
+		sql_statements = [query['sql'] for query in captured.captured_queries]
+		# One prefetch query for all nested users' tech stacks — never one per user.
+		stack_queries = [sql for sql in sql_statements if 'taskflow_usertechstack' in sql]
+		self.assertEqual(len(stack_queries), 1)
+		# No standalone per-user "SELECT COUNT(*) FROM taskflow_taskassignment
+		# WHERE user_id = X" queries; counts come from the annotation inside
+		# the list query (the paginator's grouped COUNT wrapper is fine).
+		standalone_counts = [
+			sql for sql in sql_statements
+			if re.search(r'SELECT COUNT\(\*\)\s+FROM "taskflow_taskassignment"\s+WHERE', sql)
+		]
+		self.assertEqual(standalone_counts, [])
+
+		# Filtered variant keeps nested counts correct despite the extra join.
+		# Only members holding assignments on matching tasks appear (member0
+		# holds none), and their counts must not be inflated by the join.
+		response = self.client.get('/api/admin/assignments/?tech_stack=React,Python')
+		self.assertEqual(response.status_code, 200)
+		nested_counts = {item['user']['id']: item['user']['assigned_task_count'] for item in response.data['results']}
+		self.assertEqual(len(nested_counts), 4)  # members 1..4
+		for member_index in range(1, 5):
+			member_id = self.members[member_index].id
+			self.assertIn(member_id, nested_counts)
+			self.assertEqual(nested_counts[member_id], member_index)

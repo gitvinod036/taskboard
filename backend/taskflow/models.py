@@ -2,6 +2,119 @@ from django.db import models
 from django.conf import settings
 
 
+class CodingProblem(models.Model):
+	"""A coding problem that can be reviewed, drafted, and published.
+
+	The AI-generation pipeline writes into DRAFT; only an explicit admin
+	Publish action (PATCH status -> PUBLISHED) makes a problem visible to
+	normal users. Hidden test cases are never returned by user endpoints.
+	"""
+
+	class Status(models.TextChoices):
+		DRAFT = 'DRAFT', 'Draft'
+		PUBLISHED = 'PUBLISHED', 'Published'
+
+	title = models.CharField(max_length=200)
+	description = models.TextField()
+	difficulty = models.CharField(max_length=20, choices=[('EASY', 'Easy'), ('MEDIUM', 'Medium'), ('HARD', 'Hard')])
+	input_format = models.TextField()
+	output_format = models.TextField()
+	constraints = models.TextField()
+	explanation = models.TextField(blank=True)
+	starter_code = models.JSONField(default=dict, blank=True)
+	allowed_languages = models.JSONField(default=list, blank=True)
+	examples = models.JSONField(default=list, blank=True)
+	status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+	created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='created_coding_problems')
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+	published_at = models.DateTimeField(null=True, blank=True)
+
+	class Meta:
+		ordering = ('-created_at', 'id')
+		indexes = [models.Index(fields=('status',))]
+
+	def __str__(self):
+		return self.title
+
+
+class CodingProblemTestCase(models.Model):
+	"""A public or hidden test case for a coding problem."""
+	problem = models.ForeignKey(CodingProblem, on_delete=models.CASCADE, related_name='test_cases')
+	input = models.TextField()
+	expected_output = models.TextField()
+	is_hidden = models.BooleanField(default=False)
+	order = models.PositiveIntegerField()
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		ordering = ('order', 'id')
+		constraints = [models.UniqueConstraint(fields=('problem', 'order'), name='unique_problem_testcase_order')]
+
+	def __str__(self):
+		return f"# {self.order} ({'hidden' if self.is_hidden else 'public'})"
+
+
+class CodeSubmission(models.Model):
+	"""A user's source-code submission for a coding problem.
+
+	PHASE 3: submissions are executed inside an isolated Docker sandbox by
+	taskflow.execution. Nothing here runs user code on the Django host, and
+	clients can never write status/verdict/metrics directly — those are set
+	only by the execution service from observed results.
+	"""
+
+	class Status(models.TextChoices):
+		PENDING = 'PENDING', 'Queued for execution'
+		RUNNING = 'RUNNING', 'Running'
+		ACCEPTED = 'ACCEPTED', 'Accepted'
+		WRONG_ANSWER = 'WRONG_ANSWER', 'Wrong Answer'
+		COMPILATION_ERROR = 'COMPILATION_ERROR', 'Compilation Error'
+		RUNTIME_ERROR = 'RUNTIME_ERROR', 'Runtime Error'
+		TIME_LIMIT_EXCEEDED = 'TIME_LIMIT_EXCEEDED', 'Time Limit Exceeded'
+		MEMORY_LIMIT_EXCEEDED = 'MEMORY_LIMIT_EXCEEDED', 'Memory Limit Exceeded'
+		SYSTEM_ERROR = 'SYSTEM_ERROR', 'System Error'
+
+	user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='code_submissions')
+	problem = models.ForeignKey(CodingProblem, on_delete=models.CASCADE, related_name='submissions')
+	language = models.CharField(max_length=30)
+	source_code = models.TextField()
+	status = models.CharField(max_length=30, choices=Status.choices, default=Status.PENDING)
+
+	# RUN = "Run Code" against public tests only; SUBMIT = full judging
+	# (public + hidden). Set by the server, never by the client.
+	class Mode(models.TextChoices):
+		RUN = 'RUN', 'Run (public tests)'
+		SUBMIT = 'SUBMIT', 'Submit (public + hidden tests)'
+
+	mode = models.CharField(max_length=10, choices=Mode.choices, default=Mode.SUBMIT)
+	verdict = models.CharField(max_length=30, choices=Status.choices, null=True, blank=True)
+	completed_at = models.DateTimeField(null=True, blank=True)
+
+	# Populated by the Phase 3 execution service. Kept nullable so a queued
+	# submission never carries invented values.
+	execution_time = models.FloatField(null=True, blank=True)
+	memory_used = models.FloatField(null=True, blank=True)
+	passed_tests = models.PositiveIntegerField(null=True, blank=True)
+	total_tests = models.PositiveIntegerField(null=True, blank=True)
+	score = models.FloatField(null=True, blank=True)
+	feedback = models.TextField(blank=True)
+
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		ordering = ('-created_at', '-id')
+		indexes = [
+			models.Index(fields=('user', 'problem')),
+			models.Index(fields=('status',)),
+			models.Index(fields=('problem',)),
+		]
+
+	def __str__(self):
+		return f'#{self.pk} {self.user} -> {self.problem_id} [{self.language}] {self.status}'
+
+
 class Task(models.Model):
 	title = models.CharField(max_length=200)
 	description = models.TextField()
