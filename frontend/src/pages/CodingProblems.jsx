@@ -9,9 +9,18 @@ export function DifficultyBadge({ difficulty }) {
   const level = String(difficulty || '').toLowerCase()
   return (
     <span className={`difficulty-badge difficulty-${level}`}>
-      {difficulty || 'â€”'}
+      {difficulty || '—'}
     </span>
   )
+}
+
+// Display helper for the score chip. The authoritative mapping lives in the
+// backend (DIFFICULTY_POINTS on CodingProblem) and the API already returns
+// each problem's derived `points`; problems without a value hide the chip.
+export function PointsChip({ points }) {
+  const value = Number(points)
+  if (!Number.isFinite(value) || value <= 0) return null
+  return <span className="problem-card-points">{value} points</span>
 }
 
 export function LanguageChips({ languages }) {
@@ -76,7 +85,7 @@ export default function CodingProblems() {
         <div>
           <p className="eyebrow">Practice Arena</p>
           <h1>Coding Problems</h1>
-          <p>Sharpen your skills with real problems â€” write code, run tests, and submit solutions.</p>
+          <p>Sharpen your skills with real problems — write code, run tests, and submit solutions.</p>
         </div>
       </section>
 
@@ -85,7 +94,7 @@ export default function CodingProblems() {
           <input
             type="text"
             className="input-bordered"
-            placeholder="Search problems by titleâ€¦"
+            placeholder="Search problems by title…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             aria-label="Search problems"
@@ -111,15 +120,22 @@ export default function CodingProblems() {
             <article className="problem-card" key={problem.id}>
               <div className="problem-card-top">
                 <DifficultyBadge difficulty={problem.difficulty} />
+                <PointsChip points={problem.points} />
               </div>
               <h2 className="problem-card-title">{problem.title}</h2>
               <p className="problem-card-desc">{problem.description}</p>
               <LanguageChips languages={problem.allowed_languages} />
               <div className="problem-card-meta">
-                <button type="button" className="button-primary button-small"
-                  onClick={() => (window.location.href = `/coding/problems/${problem.id}`)}>
-                  Solve â†’
-                </button>
+                <div className="problem-card-actions">
+                  <button type="button" className="button-primary button-small"
+                    onClick={() => (window.location.href = `/coding/problems/${problem.id}/solve`)}>
+                    Solve Problem →
+                  </button>
+                  <button type="button" className="button-secondary button-small"
+                    onClick={() => (window.location.href = `/coding/problems/${problem.id}`)}>
+                    View Problem
+                  </button>
+                </div>
                 <span className="problem-card-date">
                   {problem.published_at ? `Published ${new Date(problem.published_at).toLocaleDateString()}` : ''}
                 </span>

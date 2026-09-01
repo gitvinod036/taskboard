@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import api from '../services/api'
 import WorkspaceNav from '../components/WorkspaceNav'
 import Pagination from '../components/Pagination'
-import { DifficultyBadge, LanguageChips } from './CodingProblems'
+import { DifficultyBadge, LanguageChips, PointsChip } from './CodingProblems'
 
 function ListSkeleton() {
   return (
@@ -127,6 +127,7 @@ export default function AdminCodingProblems() {
             <article className="problem-card" key={problem.id}>
               <div className="problem-card-top">
                 <DifficultyBadge difficulty={problem.difficulty} />
+                <PointsChip points={problem.points} />
                 <span className={`submission-status submission-${problem.status.toLowerCase()}`}>
                   {problem.status === 'PUBLISHED' ? 'Published' : 'Draft'}
                 </span>

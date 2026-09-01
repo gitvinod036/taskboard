@@ -6,6 +6,7 @@ import Login from './pages/Login'
 import Register from './pages/Register'
 import TaskBoard from './pages/TaskBoard'
 import MyTasks from './pages/MyTasks'
+import AdminCreateTask from './pages/AdminCreateTask'
 import AdminAssignments from './pages/AdminAssignments'
 import AdminCodingProblemEdit from './pages/AdminCodingProblemEdit'
 import AdminCodingProblems from './pages/AdminCodingProblems'
@@ -14,6 +15,7 @@ import AdminSubmissions from './pages/AdminSubmissions'
 import AdminUsers from './pages/AdminUsers'
 import CodingProblemDetails from './pages/CodingProblemDetails'
 import CodingProblems from './pages/CodingProblems'
+import Leaderboard from './pages/Leaderboard'
 import ProtectedRoute from './routes/ProtectedRoute'
 import SessionLoader from './components/SessionLoader'
 import ForgotPassword from './pages/ForgotPassword'
@@ -24,6 +26,7 @@ import OAuthCallback from './pages/OAuthCallback'
 // so they are fetched only when their route opens.
 const AdminMonitoring = lazy(() => import('./pages/AdminMonitoring'))
 const CodingWorkspace = lazy(() => import('./pages/CodingWorkspace'))
+const NotificationSettings = lazy(() => import('./pages/NotificationSettings'))
 
 function App() {
   const path = window.location.pathname
@@ -39,12 +42,18 @@ function App() {
       ? <OAuthCallback />
     : resetMatch
       ? <ResetPassword uid={resetMatch[1]} token={resetMatch[2]} />
+    : path === '/settings/notifications'
+      ? <ProtectedRoute><Suspense fallback={<SessionLoader />}><NotificationSettings /></Suspense></ProtectedRoute>
     : path === '/coding/problems'
       ? <ProtectedRoute><CodingProblems /></ProtectedRoute>
+    : path === '/leaderboard'
+      ? <ProtectedRoute><Leaderboard /></ProtectedRoute>
     : codingSolveMatch
       ? <ProtectedRoute><Suspense fallback={<SessionLoader />}><CodingWorkspace problemId={codingSolveMatch[1]} /></Suspense></ProtectedRoute>
     : codingDetailMatch
       ? <ProtectedRoute><CodingProblemDetails problemId={codingDetailMatch[1]} /></ProtectedRoute>
+    : path === '/admin/create-task'
+      ? <ProtectedRoute adminOnly><AdminCreateTask /></ProtectedRoute>
     : path === '/admin/coding/problems'
       ? <ProtectedRoute adminOnly><AdminCodingProblems /></ProtectedRoute>
     : codingEditMatch

@@ -4,8 +4,8 @@ from .views import (
     AdminAssignmentsView, AdminCodeSubmissionDetailView, AdminCodingProblemDetailView,
     AdminCodingProblemsView, AdminCodingSubmissionsView, AdminDashboardView,
     AdminSubmissionReviewView, AdminSubmissionsView, AdminTechStacksView,
-    AdminUserDetailView, AdminUserTaskDeleteView, AdminUserTasksView,
-    AdminUsersView, CodingProblemGenerateView,
+    AdminSubmissionAnalysisView, AdminUserDetailView, AdminUserTaskDeleteView,
+    AdminUserTasksView, AdminUsersView, CodingProblemGenerateView,
 )
 
 urlpatterns = [
@@ -23,4 +23,5 @@ urlpatterns = [
 	path('coding/problems/generate/', CodingProblemGenerateView.as_view(), name='admin-coding-problem-generate'),
 	path('coding/submissions/', AdminCodingSubmissionsView.as_view(), name='admin-coding-submissions'),
 	path('coding/submissions/<int:submission_id>/', AdminCodeSubmissionDetailView.as_view(), name='admin-coding-submission-detail'),
+	path('coding/submissions/<int:submission_id>/analyze/', AdminSubmissionAnalysisView.as_view(), name='admin-coding-submission-analyze'),
 ]

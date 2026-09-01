@@ -4,7 +4,7 @@ import api from '../services/api'
 import WorkspaceNav from '../components/WorkspaceNav'
 import CodeEditor from '../components/CodeEditor'
 import Pagination from '../components/Pagination'
-import { DifficultyBadge } from './CodingProblems'
+import { DifficultyBadge, PointsChip } from './CodingProblems'
 import {
   DEFAULT_LANGUAGE,
   languageDisplayName,
@@ -47,6 +47,10 @@ export default function CodingWorkspace({ problemId }) {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [page, setPage] = useState(1)
   const [pagination, setPagination] = useState({ count: 0, next: null, previous: null })
+
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState('')
+  const [aiAnalysis, setAiAnalysis] = useState(null)
 
   useEffect(() => {
     if (!problemId) return
@@ -112,6 +116,12 @@ export default function CodingWorkspace({ problemId }) {
         source_code: code,
       })
       setLatestSubmission(data)
+      if (mode === 'SUBMIT') {
+        // A new submission invalidates any previous AI analysis — never show
+        // stale analysis alongside a fresh judge result.
+        setAiAnalysis(null)
+        setAiError('')
+      }
       setPage(1)
       loadHistory(1)
     } catch (err) {
@@ -130,6 +140,23 @@ export default function CodingWorkspace({ problemId }) {
     (submission) => `submission-status submission-${String(submission.status).toLowerCase().replace(/_/g, '-')}`,
     [],
   )
+
+  async function analyzeWithAI() {
+    if (!latestSubmission || aiLoading) return
+    setAiLoading(true)
+    setAiError('')
+    try {
+      const { data } = await api.post(`/coding/submissions/${latestSubmission.id}/analyze/`)
+      setAiAnalysis(data.analysis || null)
+      if (!data.analysis) setAiError('Gemini returned no analysis.')
+    } catch (err) {
+      setAiAnalysis(null)
+      const detail = err.response?.data?.detail
+      setAiError(typeof detail === 'string' ? detail : 'AI analysis could not be generated.')
+    } finally {
+      setAiLoading(false)
+    }
+  }
 
   if (loading) return (
     <main className="workspace-shell">
@@ -156,6 +183,7 @@ export default function CodingWorkspace({ problemId }) {
           <h1>{problem.title}</h1>
           <div className="meta-badges">
             <DifficultyBadge difficulty={problem.difficulty} />
+            <PointsChip points={problem.points} />
             <span className="language-chip">{languageDisplayName(language)}</span>
           </div>
         </div>
@@ -246,6 +274,7 @@ export default function CodingWorkspace({ problemId }) {
       <section className="admin-panel admin-wide-panel surface-panel coding-history-panel">
         <h3>Execution Result</h3>
         {latestSubmission ? (
+          <>
           <div className="submission-card">
             <div className="submission-card-header">
               <div>
@@ -292,6 +321,65 @@ export default function CodingWorkspace({ problemId }) {
               </div>
             )}
           </div>
+
+          <div className="ai-analysis-panel">
+            {!aiAnalysis && !aiLoading && (
+              <div className="ai-analysis-actions">
+                <button
+                  type="button"
+                  className="button-muted"
+                  onClick={analyzeWithAI}
+                  disabled={aiLoading}
+                  aria-busy={aiLoading}
+                >
+                  {aiAnalysis ? 'Regenerate analysis' : 'Analyze with AI'}
+                </button>
+                <p className="ai-analysis-note">
+                  Get qualitative feedback from AI. The judge result above is the source of truth for pass/fail.
+                </p>
+              </div>
+            )}
+            {aiLoading && <p className="state-message" role="status">Analyzing submission…</p>}
+            {aiError && (
+              <div className="ai-analysis-error">
+                <p className="form-error" role="alert">{aiError}</p>
+                <button type="button" className="button-muted button-small" onClick={analyzeWithAI} disabled={aiLoading}>
+                  Try again
+                </button>
+              </div>
+            )}
+            {aiAnalysis && (
+              <div className="ai-analysis result">
+                <div className="ai-analysis-actions">
+                  <span className="section-kicker">AI Analysis</span>
+                  <button type="button" className="button-muted button-small" onClick={analyzeWithAI} disabled={aiLoading} aria-busy={aiLoading}>
+                    {aiLoading ? 'Regenerating…' : 'Regenerate analysis'}
+                  </button>
+                </div>
+                {aiError && <p className="form-error" role="alert">{aiError}</p>}
+                {aiAnalysis.summary && <p className="ai-summary">{aiAnalysis.summary}</p>}
+                {aiAnalysis.correctness && (<div className="ai-block"><strong>Correctness</strong><p>{aiAnalysis.correctness}</p></div>)}
+                {Array.isArray(aiAnalysis.bugs) && aiAnalysis.bugs.length > 0 && (
+                  <div className="ai-block"><strong>Potential bugs</strong><ul>{aiAnalysis.bugs.map((b, i) => <li key={i}>{b}</li>)}</ul></div>
+                )}
+                {aiAnalysis.code_quality && (<div className="ai-block"><strong>Code quality</strong><p>{aiAnalysis.code_quality}</p></div>)}
+                {(aiAnalysis.time_complexity || aiAnalysis.space_complexity) && (
+                  <div className="ai-block ai-complexity">
+                    <strong>Complexity</strong>
+                    {aiAnalysis.time_complexity && <span>Time: {aiAnalysis.time_complexity}</span>}
+                    {aiAnalysis.space_complexity && <span>Space: {aiAnalysis.space_complexity}</span>}
+                  </div>
+                )}
+                {Array.isArray(aiAnalysis.edge_cases) && aiAnalysis.edge_cases.length > 0 && (
+                  <div className="ai-block"><strong>Edge cases to consider</strong><ul>{aiAnalysis.edge_cases.map((e, i) => <li key={i}>{e}</li>)}</ul></div>
+                )}
+                {Array.isArray(aiAnalysis.suggestions) && aiAnalysis.suggestions.length > 0 && (
+                  <div className="ai-block"><strong>Suggestions</strong><ul>{aiAnalysis.suggestions.map((s, i) => <li key={i}>{s}</li>)}</ul></div>
+                )}
+              </div>
+            )}
+          </div>
+          </>
         ) : (
           <p className="empty-state"><strong>No submission yet</strong><span>Your latest result will appear here.</span></p>
         )}

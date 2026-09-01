@@ -1,6 +1,6 @@
 from django.urls import path
 
-from .views import AdminCheckView, GoogleCallbackView, GoogleLoginView, GoogleTokenExchangeView, LoginView, LogoutView, MeTechStackView, MeView, PasswordResetConfirmView, PasswordResetRequestView, RegisterView
+from .views import AdminCheckView, GoogleCallbackView, GoogleLoginView, GoogleTokenExchangeView, LoginView, LogoutView, MeTechStackView, MeView, NotificationListView, NotificationMarkReadView, NotificationPreferenceView, PasswordResetConfirmView, PasswordResetRequestView, RegisterView, TaskDraftAIView
 
 app_name = 'taskflow'
 
@@ -15,6 +15,10 @@ urlpatterns = [
 	path('logout/', LogoutView.as_view(), name='logout'),
 	path('me/', MeView.as_view(), name='me'),
 	path('me/tech-stack/', MeTechStackView.as_view(), name='me-tech-stack'),
+	path('me/notification-preferences/', NotificationPreferenceView.as_view(), name='me-notification-preferences'),
+	path('me/notifications/', NotificationListView.as_view(), name='me-notifications'),
+	path('me/notifications/mark-read/', NotificationMarkReadView.as_view(), name='me-notifications-mark-read'),
 	path('admin-check/', AdminCheckView.as_view(), name='admin-check'),
+	path('ai/task-draft/', TaskDraftAIView.as_view(), name='ai-task-draft'),
 ]
 

@@ -6,6 +6,10 @@ import { languageDisplayName } from '../languages'
 
 const DIFFICULTIES = ['EASY', 'MEDIUM', 'HARD']
 const LANGS = ['python', 'javascript', 'java', 'cpp']
+// Display-only preview of the score the backend derives from difficulty
+// (CodingProblem.points / DIFFICULTY_POINTS: EASY 10, MEDIUM 20, HARD 30).
+// Points are never manually editable and never sent in the payload.
+const DIFFICULTY_POINTS = { EASY: 10, MEDIUM: 20, HARD: 30 }
 
 function blankProblem() {
   return {
@@ -53,7 +57,7 @@ function TestCaseCard({ tc, hidden, onUpdate, onRemove }) {
   )
 }
 
-export default function AdminCodingProblemEdit({ problemId }) {
+export default function AdminCodingProblemEdit({ problemId, embedded = false }) {
   const isNew = !problemId || problemId === 'new'
   const [problem, setProblem] = useState(null)
   const [loading, setLoading] = useState(!isNew)
@@ -75,19 +79,27 @@ export default function AdminCodingProblemEdit({ problemId }) {
       .finally(() => setLoading(false))
   }, [problemId, isNew])
 
-  if (loading) return (
-    <main className="workspace-shell">
-      <WorkspaceNav active="coding" />
-      <p className="state-message">Loading problem…</p>
-    </main>
-  )
+  if (loading) {
+    if (embedded) return <p className="state-message" role="status">Loading problem…</p>
+    return (
+      <main className="workspace-shell">
+        <WorkspaceNav active="coding" />
+        <p className="state-message">Loading problem…</p>
+      </main>
+    )
+  }
 
-  if (!problem) return (
-    <main className="workspace-shell">
-      <WorkspaceNav active="coding" />
-      {error && <p className="form-error" role="alert">{error}</p>}
-    </main>
-  )
+  if (!problem) {
+    if (embedded) return error
+      ? <p className="form-error" role="alert">{error}</p>
+      : null
+    return (
+      <main className="workspace-shell">
+        <WorkspaceNav active="coding" />
+        {error && <p className="form-error" role="alert">{error}</p>}
+      </main>
+    )
+  }
 
   function updateField(name, value) {
     setProblem({ ...problem, [name]: value })
@@ -176,10 +188,10 @@ export default function AdminCodingProblemEdit({ problemId }) {
     setError('')
     try {
       const payload = normalizePayload()
-      if (isNew) {
-        await api.post('/admin/coding/problems/', payload)
+      if (hasPersistedProblem) {
+        await api.patch(`/admin/coding/problems/${problem.id}/`, payload)
       } else {
-        await api.patch(`/admin/coding/problems/${problemId}/`, payload)
+        await api.post('/admin/coding/problems/', payload)
       }
       window.location.href = '/admin/coding/problems'
     } catch (err) {
@@ -224,9 +236,11 @@ export default function AdminCodingProblemEdit({ problemId }) {
     setError('')
     try {
       const payload = { ...normalizePayload(), status: 'PUBLISHED' }
-      const url = isNew ? '/admin/coding/problems/' : `/admin/coding/problems/${problemId}/`
-      const method = isNew ? 'post' : 'patch'
-      await api[method](url, payload)
+      if (hasPersistedProblem) {
+        await api.patch(`/admin/coding/problems/${problem.id}/`, payload)
+      } else {
+        await api.post('/admin/coding/problems/', payload)
+      }
       window.location.href = '/admin/coding/problems'
     } catch (err) {
       setError(err.response?.data?.detail || 'Could not publish problem.')
@@ -237,10 +251,16 @@ export default function AdminCodingProblemEdit({ problemId }) {
 
   const publicCases = problem.test_cases.filter((tc) => !tc.is_hidden)
   const hiddenCases = problem.test_cases.filter((tc) => tc.is_hidden)
+  // Decide CREATE vs UPDATE from the actual persisted state, not the route
+  // slug: after AI generation the problem already carries a real id, so the
+  // next save must PATCH that row instead of POSTing a duplicate.
+  const hasPersistedProblem = Boolean(problem?.id)
 
-  return (
-    <main className="workspace-shell">
-      <WorkspaceNav active="coding" />
+  // Body of the editor, reused by both the standalone route and the unified
+  // Create Task page (embedded mode skips its own page shell/navigation).
+  const body = (
+    <>
+      {!embedded && <WorkspaceNav active="coding" />}
       <section className="page-intro">
         <div>
           <p className="eyebrow">Administration</p>
@@ -284,8 +304,9 @@ export default function AdminCodingProblemEdit({ problemId }) {
               <label htmlFor="problem-difficulty">Difficulty</label>
               <select id="problem-difficulty" className="input-bordered" value={problem.difficulty}
                 onChange={(e) => updateField('difficulty', e.target.value)}>
-                {DIFFICULTIES.map((d) => <option key={d} value={d}>{d}</option>)}
+                {DIFFICULTIES.map((d) => <option key={d} value={d}>{d} — {DIFFICULTY_POINTS[d] ?? 0} points</option>)}
               </select>
+              <span className="field-hint">Score is derived from difficulty: {DIFFICULTY_POINTS[problem.difficulty] ?? 0} points.</span>
             </div>
             <div className="field field-span-2">
               <span className="field-label">Allowed Languages</span>
@@ -405,6 +426,10 @@ export default function AdminCodingProblemEdit({ problemId }) {
           </div>
         </section>
       </div>
-    </main>
+    </>
   )
+
+  if (embedded) return body
+
+  return <main className="workspace-shell">{body}</main>
 }

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 
 import { useAuth } from '../context/AuthContext'
+import { ThemeToggle } from '../theme'
 
 export default function Login() {
   const { login } = useAuth()
@@ -18,7 +19,14 @@ export default function Login() {
     }
   }
 
-  return <AuthForm title="Welcome back" submitLabel="Sign in" form={form} setForm={setForm} error={error} onSubmit={handleSubmit} footer="Need an account?" link="/register" linkLabel="Register" />
+  return (
+    <>
+      <div className="auth-theme-slot">
+        <ThemeToggle />
+      </div>
+      <AuthForm title="Welcome back" submitLabel="Sign in" form={form} setForm={setForm} error={error} onSubmit={handleSubmit} footer="Need an account?" link="/register" linkLabel="Register" />
+    </>
+  )
 }
 
 function AuthForm({ title, submitLabel, form, setForm, error, onSubmit, footer, link, linkLabel, includeConfirmation = false }) {

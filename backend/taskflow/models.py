@@ -2,6 +2,16 @@ from django.db import models
 from django.conf import settings
 
 
+# Authoritative difficulty → points mapping for coding problems. Kept in one
+# backend location so every view/component derives the same value. Points are
+# computed from difficulty — there is no manually-assigned points field.
+DIFFICULTY_POINTS = {
+    'EASY': 10,
+    'MEDIUM': 20,
+    'HARD': 30,
+}
+
+
 class CodingProblem(models.Model):
 	"""A coding problem that can be reviewed, drafted, and published.
 
@@ -36,6 +46,11 @@ class CodingProblem(models.Model):
 
 	def __str__(self):
 		return self.title
+
+	@property
+	def points(self):
+		"""Reward value derived from difficulty (EASY 10, MEDIUM 20, HARD 30)."""
+		return DIFFICULTY_POINTS.get(self.difficulty, 0)
 
 
 class CodingProblemTestCase(models.Model):
@@ -115,9 +130,47 @@ class CodeSubmission(models.Model):
 		return f'#{self.pk} {self.user} -> {self.problem_id} [{self.language}] {self.status}'
 
 
+class SubmissionAnalysis(models.Model):
+	"""AI-generated qualitative feedback for a completed coding submission.
+
+	The judge (taskflow.execution) remains the only source of truth for
+	pass/fail and metrics; this stores Gemini's additional coaching only.
+	One row per submission: regeneration updates the existing row in place
+	instead of creating duplicates. Never displayed as a verdict.
+	"""
+
+	submission = models.OneToOneField(CodeSubmission, on_delete=models.CASCADE, related_name='ai_analysis')
+	summary = models.TextField()
+	correctness = models.TextField()
+	bugs = models.JSONField(default=list, blank=True)
+	code_quality = models.TextField()
+	time_complexity = models.CharField(max_length=200, blank=True)
+	space_complexity = models.CharField(max_length=200, blank=True)
+	edge_cases = models.JSONField(default=list, blank=True)
+	suggestions = models.JSONField(default=list, blank=True)
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	def __str__(self):
+		return f'AI analysis for submission #{self.submission_id}'
+
+
+
 class Task(models.Model):
+	# Difficulty drives a derived reward via the single authoritative
+	# DIFFICULTY_POINTS mapping (shared with CodingProblem). EASY is the safe
+	# default so pre-existing tasks created without difficulty stay valid.
+	class Difficulty(models.TextChoices):
+		EASY = 'EASY', 'Easy'
+		MEDIUM = 'MEDIUM', 'Medium'
+		HARD = 'HARD', 'Hard'
+
 	title = models.CharField(max_length=200)
 	description = models.TextField()
+	difficulty = models.CharField(
+		max_length=20, choices=Difficulty.choices, default=Difficulty.EASY,
+		help_text='Primary difficulty level of the task.',
+	)
 	due_date = models.DateField(blank=True, null=True)
 	tech_stack = models.ManyToManyField('TechStack', blank=True, related_name='tasks')
 
@@ -126,6 +179,11 @@ class Task(models.Model):
 
 	def __str__(self):
 		return self.title
+
+	@property
+	def points(self):
+		"""Reward value derived from difficulty (EASY 10, MEDIUM 20, HARD 30)."""
+		return DIFFICULTY_POINTS.get(self.difficulty, 0)
 
 
 class TechStack(models.Model):
@@ -187,10 +245,108 @@ class TaskSubmission(models.Model):
 	note = models.TextField(blank=True)
 	status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
 	feedback = models.TextField(blank=True)
+	# Server-set reward granted exactly once when the submission is APPROVED.
+	# Never writable by the client: derived from Task.points / DIFFICULTY_POINTS
+	# at award time. Legacy fallback contribution — once a submission has a
+	# completed AI evaluation, the leaderboard uses the evaluation score.
+	earned_points = models.PositiveIntegerField(default=0)
 	submitted_at = models.DateTimeField(auto_now_add=True)
 	reviewed_at = models.DateTimeField(null=True, blank=True)
 	reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='reviewed_task_submissions')
 
 	class Meta:
-		constraints = [models.UniqueConstraint(fields=('task', 'user'), name='unique_task_submission_user')]
-		indexes = [models.Index(fields=('status',)), models.Index(fields=('user',)), models.Index(fields=('task',))]
+		# NOTE: no unique (task, user) constraint — users may RESUBMIT improved
+		# versions of a rejected task, so a (user, task) pair can own multiple
+		# historical attempts. The newest attempt is the authoritative one.
+		indexes = [models.Index(fields=('status',)), models.Index(fields=('user',)), models.Index(fields=('task',)), models.Index(fields=('user', 'task'))]
+
+
+class TaskEvaluation(models.Model):
+	"""AI evaluation of an APPROVED normal-task submission, on a fixed 10-point rubric.
+
+	The judge/reviewer remains the source of truth for acceptance: only
+	APPROVED submissions may be evaluated, and a rejected submission can
+	never receive a score. The backend recalculates total_score from the
+	individual rubric categories — an AI-supplied total is never trusted —
+	and nothing here writes leaderboard points directly; the leaderboard
+	derives contributions from these rows at read time. Regeneration
+	updates the existing row in place (one row per submission).
+	"""
+
+	class Status(models.TextChoices):
+		PENDING = 'PENDING', 'Pending evaluation'
+		COMPLETED = 'COMPLETED', 'Evaluation complete'
+		FAILED = 'FAILED', 'Evaluation failed (retry allowed)'
+
+	submission = models.OneToOneField(TaskSubmission, on_delete=models.CASCADE, related_name='ai_evaluation')
+	status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+	# Rubric category scores; total_score is always the server-computed sum.
+	scores = models.JSONField(default=dict, blank=True)
+	total_score = models.PositiveSmallIntegerField(default=0)
+	summary = models.TextField(blank=True)
+	strengths = models.JSONField(default=list, blank=True)
+	issues = models.JSONField(default=list, blank=True)
+	suggestions = models.JSONField(default=list, blank=True)
+	error_message = models.CharField(max_length=200, blank=True)
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		indexes = [models.Index(fields=('status',))]
+
+	def __str__(self):
+		return f'AI evaluation for submission #{self.submission_id} [{self.status}] {self.total_score}/10'
+
+
+class NotificationPreference(models.Model):
+	"""Per-user notification preferences.
+
+	Created lazily with all-True defaults on first read/update so existing
+	users keep working without a data migration.
+	"""
+
+	user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='notification_preference')
+	task_assignments = models.BooleanField(default=True, help_text='Notify when a task is assigned to me.')
+	submission_reviews = models.BooleanField(default=True, help_text='Notify when my submission is reviewed.')
+	task_deadlines = models.BooleanField(default=True, help_text='Notify about task deadlines and overdue tasks.')
+	admin_announcements = models.BooleanField(default=True, help_text='Receive general/admin announcements.')
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		verbose_name_plural = 'notification preferences'
+
+	def __str__(self):
+		return f'Notification preferences for {self.user}'
+
+
+class Notification(models.Model):
+	"""An in-app notification for one recipient.
+
+	Created ONLY by server-side workflow events (task published, submission
+	received, review outcome, AI evaluation) — never from client input.
+	Idempotent per event: (recipient, event_key) is unique, so replaying the
+	same backend event (repeated API call, retry, re-review) can never create
+	duplicate rows.
+	"""
+
+	recipient = models.ForeignKey(
+		settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='notifications',
+	)
+	title = models.CharField(max_length=200)
+	message = models.TextField()
+	# Frontend path the notification opens (e.g. /my-tasks, /admin/submissions).
+	url = models.CharField(max_length=300, blank=True)
+	# Deterministic per-event key, e.g. 'task-published-12-user-3'.
+	event_key = models.CharField(max_length=150)
+	is_read = models.BooleanField(default=False)
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		ordering = ('-created_at', '-id')
+		constraints = [
+			models.UniqueConstraint(fields=('recipient', 'event_key'), name='unique_recipient_notification_event'),
+		]
+		indexes = [models.Index(fields=('recipient', 'is_read'))]
+
+	def __str__(self):
+		return f'Notification for {self.recipient}: {self.title}'

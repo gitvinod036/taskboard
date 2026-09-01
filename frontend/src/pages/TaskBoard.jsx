@@ -7,6 +7,8 @@ import TechStackFilter from '../components/molecules/TechStackFilter'
 import Pagination from '../components/Pagination'
 
 const emptyForm = { title: '', description: '', due_date: '' }
+const EMPTY_DRAFT = { title: '', description: '', technology: '', difficulty: 'MEDIUM', requirements: [''], expected_outcome: '' }
+const DRAFT_DIFFICULTIES = ['EASY', 'MEDIUM', 'HARD']
 
 export default function TaskBoard() {
   const { isAdmin } = useAuth()
@@ -23,6 +25,11 @@ export default function TaskBoard() {
   const [selectedStacks, setSelectedStacks] = useState([])
   const [page, setPage] = useState(1)
   const [pagination, setPagination] = useState({ count: 0, next: null, previous: null })
+  const [aiOpen, setAiOpen] = useState(false)
+  const [aiPrompt, setAiPrompt] = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState('')
+  const [draft, setDraft] = useState(EMPTY_DRAFT)
 
   async function loadTasks(stackFilter = selectedStacks, pageNumber = page) {
     setLoading(true)
@@ -129,6 +136,66 @@ export default function TaskBoard() {
     } catch {
       setError('Task could not be deleted.')
     }
+  }
+
+  // ── AI Task Assistant (draft generator only — never creates a task) ──────
+  function toggleAIAssistant() {
+    setAiOpen((open) => !open)
+    setAiError('')
+  }
+
+  function updateDraft(field, value) {
+    setDraft((current) => ({ ...current, [field]: value }))
+  }
+
+  function updateRequirement(index, value) {
+    setDraft((current) => {
+      const requirements = current.requirements.map((item, i) => (i === index ? value : item))
+      return { ...current, requirements }
+    })
+  }
+
+  function removeRequirement(index) {
+    setDraft((current) => ({
+      ...current,
+      requirements: current.requirements.filter((_, i) => i !== index),
+    }))
+  }
+
+  async function generateDraft(event) {
+    event.preventDefault()
+    const prompt = aiPrompt.trim()
+    if (!prompt) {
+      setAiError('Describe the task you want in one sentence first.')
+      return
+    }
+    setAiLoading(true)
+    setAiError('')
+    try {
+      const { data } = await api.post('/auth/ai/task-draft/', { prompt })
+      const requirements = Array.isArray(data.requirements) && data.requirements.length
+        ? data.requirements
+        : ['']
+      setDraft({
+        title: data.title || '',
+        description: data.description || '',
+        technology: data.technology || '',
+        difficulty: DRAFT_DIFFICULTIES.includes(data.difficulty) ? data.difficulty : 'MEDIUM',
+        requirements,
+        expected_outcome: data.expected_outcome || '',
+      })
+      setNotice('Draft generated. Review it below before creating anything.')
+    } catch (requestError) {
+      setAiError(requestError.response?.data?.detail || 'AI generation failed. Please try again later.')
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
+  function useDraftInForm() {
+    setEditingId(null)
+    setForm({ title: draft.title.trim(), description: draft.description.trim(), due_date: '' })
+    setNotice('Draft copied into the task form. Review it and click "Create task" to save.')
   }
 
 
@@ -273,8 +340,135 @@ export default function TaskBoard() {
                   Cancel
                 </button>
               )}
+              {!editingId && (
+                <button type="button" className="button-muted" onClick={toggleAIAssistant}>
+                  {aiOpen ? 'Hide AI assistant' : 'Generate with AI'}
+                </button>
+              )}
             </div>
           </form>
+        )}
+        {isAdmin && aiOpen && (
+          <section className="ai-assistant-panel surface-panel" aria-labelledby="ai-assistant-title">
+            <div className="section-heading">
+              <div>
+                <p className="section-kicker">AI tools</p>
+                <h2 id="ai-assistant-title">AI Task Assistant</h2>
+                <p className="section-description">
+                  Describe the task you want and Gemini will draft it. Nothing is created
+                  automatically — review everything, then use the task form to save.
+                </p>
+              </div>
+            </div>
+            <form className="ai-prompt-form" onSubmit={generateDraft}>
+              <label htmlFor="ai-task-prompt">
+                Task request
+                <textarea
+                  id="ai-task-prompt"
+                  rows="2"
+                  maxLength="2000"
+                  placeholder='e.g. "Create an intermediate Python task about REST APIs"'
+                  value={aiPrompt}
+                  onChange={(event) => setAiPrompt(event.target.value)}
+                />
+              </label>
+              <div className="form-actions">
+                <button type="submit" disabled={aiLoading} aria-busy={aiLoading}>
+                  {aiLoading ? 'Generating...' : 'Generate'}
+                </button>
+                <button type="button" className="button-muted" onClick={toggleAIAssistant}>
+                  Close
+                </button>
+              </div>
+            </form>
+            {aiError && <p className="form-error" role="alert">{aiError}</p>}
+            {draft.title && !aiLoading && (
+              <div className="ai-draft">
+                <p className="ai-draft-label">Generated draft (editable)</p>
+                <div className="ai-draft-grid">
+                  <label htmlFor="ai-draft-title">
+                    Title
+                    <input
+                      id="ai-draft-title"
+                      maxLength="200"
+                      value={draft.title}
+                      onChange={(event) => updateDraft('title', event.target.value)}
+                    />
+                  </label>
+                  <label htmlFor="ai-draft-technology">
+                    Technology
+                    <input
+                      id="ai-draft-technology"
+                      value={draft.technology}
+                      onChange={(event) => updateDraft('technology', event.target.value)}
+                    />
+                  </label>
+                  <label htmlFor="ai-draft-difficulty">
+                    Difficulty
+                    <select
+                      id="ai-draft-difficulty"
+                      value={draft.difficulty}
+                      onChange={(event) => updateDraft('difficulty', event.target.value)}
+                    >
+                      {DRAFT_DIFFICULTIES.map((level) => (
+                        <option key={level} value={level}>{level}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <label htmlFor="ai-draft-description">
+                  Description
+                  <textarea
+                    id="ai-draft-description"
+                    rows="3"
+                    value={draft.description}
+                    onChange={(event) => updateDraft('description', event.target.value)}
+                  />
+                </label>
+                <fieldset className="ai-requirements">
+                  <legend>Requirements</legend>
+                  {draft.requirements.map((requirement, index) => (
+                    <div className="ai-requirement-row" key={`requirement-${index}`}>
+                      <input
+                        aria-label={`Requirement ${index + 1}`}
+                        value={requirement}
+                        onChange={(event) => updateRequirement(index, event.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="button-muted button-small"
+                        disabled={draft.requirements.length <= 1}
+                        onClick={() => removeRequirement(index)}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </fieldset>
+                <label htmlFor="ai-draft-outcome">
+                  Expected outcome
+                  <textarea
+                    id="ai-draft-outcome"
+                    rows="2"
+                    value={draft.expected_outcome}
+                    onChange={(event) => updateDraft('expected_outcome', event.target.value)}
+                  />
+                </label>
+                <div className="form-actions">
+                  <button type="button" onClick={useDraftInForm} disabled={!draft.title.trim() || !draft.description.trim()}>
+                    Use title &amp; description in task form
+                  </button>
+                  <button type="button" className="button-muted" onClick={() => setDraft(EMPTY_DRAFT)}>
+                    Discard draft
+                  </button>
+                </div>
+                <p className="section-note">
+                  The draft is only copied into the form fields — nothing is saved until you click
+                  "Create task".
+                </p>
+              </div>
+            )}
+          </section>
         )}
       </div>
       {(notice || error) && (

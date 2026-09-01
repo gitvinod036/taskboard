@@ -17,7 +17,12 @@ export function AuthProvider({ children }) {
 
     api.get('/auth/me/')
       .then(({ data }) => setUser(data))
-      .catch(() => localStorage.removeItem(TOKEN_KEY))
+      .catch((err) => {
+        // Only a real 401 means the token is invalid. Transient failures
+        // (backend restarting, network blip) must NOT destroy the stored
+        // session — the user would otherwise be dumped to Login on refresh.
+        if (err?.response?.status === 401) localStorage.removeItem(TOKEN_KEY)
+      })
       .finally(() => setLoading(false))
   }, [])
 

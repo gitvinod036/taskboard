@@ -6,7 +6,8 @@ from django.utils.http import urlsafe_base64_decode
 from rest_framework import serializers
 
 from .languages import is_language_allowed_for_problem
-from .models import CodeSubmission, CodingProblem, CodingProblemTestCase, Task, TaskAssignment, TaskSubmission, TechStack, UserTechStack
+from .models import CodeSubmission, CodingProblem, CodingProblemTestCase, Notification, NotificationPreference, SubmissionAnalysis, Task, TaskAssignment, TaskEvaluation, TaskSubmission, TechStack, UserTechStack
+from .services import points_earned_for_submission
 
 User = get_user_model()
 
@@ -97,6 +98,7 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 
 class TaskSerializer(serializers.ModelSerializer):
 	is_assigned = serializers.SerializerMethodField()
+	points = serializers.ReadOnlyField()
 	tech_stack = serializers.SlugRelatedField(
 		many=True,
 		read_only=True,
@@ -105,8 +107,8 @@ class TaskSerializer(serializers.ModelSerializer):
 
 	class Meta:
 		model = Task
-		fields = ('id', 'title', 'description', 'due_date', 'is_assigned', 'tech_stack')
-		read_only_fields = ('is_assigned', 'tech_stack')
+		fields = ('id', 'title', 'description', 'difficulty', 'points', 'due_date', 'is_assigned', 'tech_stack')
+		read_only_fields = ('is_assigned', 'tech_stack', 'points')
 
 	def get_is_assigned(self, task):
 		# Uses the `is_assigned_for_user` annotation added by list endpoints
@@ -154,8 +156,8 @@ class TaskAssignmentSerializer(serializers.ModelSerializer):
 class TaskSubmissionSerializer(serializers.ModelSerializer):
 	class Meta:
 		model = TaskSubmission
-		fields = ('id', 'git_url', 'linkedin_url', 'note', 'status', 'feedback', 'submitted_at', 'reviewed_at')
-		read_only_fields = ('id', 'status', 'feedback', 'submitted_at', 'reviewed_at')
+		fields = ('id', 'git_url', 'linkedin_url', 'note', 'status', 'feedback', 'earned_points', 'submitted_at', 'reviewed_at')
+		read_only_fields = ('id', 'status', 'feedback', 'earned_points', 'submitted_at', 'reviewed_at')
 
 	def validate_git_url(self, value):
 		if not any(host in value.lower() for host in ('github.com', 'gitlab.com', 'bitbucket.org')):
@@ -166,6 +168,22 @@ class TaskSubmissionSerializer(serializers.ModelSerializer):
 		if 'linkedin.com' not in value.lower():
 			raise serializers.ValidationError('Enter a LinkedIn profile URL.')
 		return value
+
+
+class TaskEvaluationSerializer(serializers.ModelSerializer):
+	"""Read-only projection of a normal-task AI evaluation.
+
+	total_score is the backend-recalculated rubric sum (max 10); best_score is
+	the user's effective score for the task (MAX across their completed
+	evaluations), attached by the view. Nothing here is client-writable.
+	"""
+
+	best_score = serializers.IntegerField(read_only=True)
+
+	class Meta:
+		model = TaskEvaluation
+		fields = ('id', 'status', 'scores', 'total_score', 'best_score', 'summary', 'strengths', 'issues', 'suggestions', 'error_message', 'created_at', 'updated_at')
+		read_only_fields = fields
 
 
 class AdminSubmissionSerializer(serializers.ModelSerializer):
@@ -286,19 +304,36 @@ class CodingProblemAdminSerializer(serializers.ModelSerializer):
 
 	Hidden test cases are returned in the admin payload (admins must be
 	able to review them) but user endpoints use a separate safe serializer.
+
+	Drafts may be saved incomplete (empty/partial title, description, etc.),
+	so the required text fields are optional + blank at this layer. Full
+	completeness is enforced ONLY on the PUBLISH transition by
+	_validate_publish below — publishing never accepts empty text fields.
 	"""
-	test_cases = CodingProblemTestCaseSerializer(many=True)
+	test_cases = CodingProblemTestCaseSerializer(many=True, required=False)
 	created_by = serializers.StringRelatedField(read_only=True)
 
 	class Meta:
 		model = CodingProblem
 		fields = (
-			'id', 'title', 'description', 'difficulty', 'input_format',
+			'id', 'title', 'description', 'difficulty', 'points', 'input_format',
 			'output_format', 'constraints', 'examples', 'explanation',
 			'starter_code', 'allowed_languages', 'test_cases', 'status',
 			'created_by', 'created_at', 'updated_at', 'published_at',
 		)
 		read_only_fields = ('id', 'created_by', 'created_at', 'updated_at', 'published_at')
+		extra_kwargs = {
+			# These are stored in NOT-NULL text columns, so an empty string is a
+			# valid DB value. Making them optional + blank lets an admin persist
+			# a completely empty (or partially filled) DRAFT; _validate_publish
+			# still rejects any of these being blank on the PUBLISHED transition.
+			'title': {'required': False, 'allow_blank': True},
+			'description': {'required': False, 'allow_blank': True},
+			'difficulty': {'required': False, 'allow_blank': True},
+			'input_format': {'required': False, 'allow_blank': True},
+			'output_format': {'required': False, 'allow_blank': True},
+			'constraints': {'required': False, 'allow_blank': True},
+		}
 
 	def create(self, validated_data):
 		test_cases_data = validated_data.pop('test_cases', [])
@@ -382,7 +417,7 @@ class CodingProblemUserSerializer(serializers.ModelSerializer):
 	class Meta:
 		model = CodingProblem
 		fields = (
-			'id', 'title', 'description', 'difficulty', 'input_format',
+			'id', 'title', 'description', 'difficulty', 'points', 'input_format',
 			'output_format', 'constraints', 'examples', 'explanation',
 			'starter_code', 'allowed_languages', 'test_cases', 'status',
 			'created_by', 'created_at', 'updated_at', 'published_at',
@@ -438,6 +473,7 @@ class CodeSubmissionUserSerializer(serializers.ModelSerializer):
 	status_label = serializers.SerializerMethodField()
 	problem_title = serializers.CharField(source='problem.title', read_only=True)
 	test_summary = serializers.SerializerMethodField()
+	earned_points = serializers.SerializerMethodField()
 
 	class Meta:
 		model = CodeSubmission
@@ -446,9 +482,12 @@ class CodeSubmissionUserSerializer(serializers.ModelSerializer):
 			'status', 'status_label', 'verdict', 'mode', 'test_summary',
 			'execution_time', 'memory_used',
 			'passed_tests', 'total_tests', 'score', 'feedback',
-			'created_at', 'updated_at', 'completed_at',
+			'created_at', 'updated_at', 'completed_at', 'earned_points',
 		)
 		read_only_fields = fields
+
+	def get_earned_points(self, submission):
+		return points_earned_for_submission(submission)
 
 	def get_status_label(self, submission):
 		return submission.get_status_display()
@@ -480,3 +519,42 @@ class AdminCodeSubmissionSerializer(CodeSubmissionUserSerializer):
 
 	class Meta(CodeSubmissionUserSerializer.Meta):
 		fields = ('user',) + CodeSubmissionUserSerializer.Meta.fields
+
+
+class SubmissionAnalysisSerializer(serializers.ModelSerializer):
+	"""Read serializer for the AI analysis stored against a submission.
+
+	Purely qualitative coaching output — never a pass/fail verdict. The
+	judge result shown alongside it comes from CodeSubmission itself.
+	"""
+
+	class Meta:
+		model = SubmissionAnalysis
+		fields = (
+			'summary', 'correctness', 'bugs', 'code_quality',
+			'time_complexity', 'space_complexity', 'edge_cases',
+			'suggestions', 'created_at', 'updated_at',
+		)
+		read_only_fields = fields
+
+
+class NotificationPreferenceSerializer(serializers.ModelSerializer):
+	"""Reads/updates the current user's notification preferences."""
+
+	class Meta:
+		model = NotificationPreference
+		fields = ('task_assignments', 'submission_reviews', 'task_deadlines', 'admin_announcements', 'updated_at')
+		read_only_fields = ('updated_at',)
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+	"""Read-only notification payload for the recipient.
+
+	recipient/event_key are never exposed or writable: notifications are
+	created exclusively by server-side workflow events.
+	"""
+
+	class Meta:
+		model = Notification
+		fields = ('id', 'title', 'message', 'url', 'is_read', 'created_at')
+		read_only_fields = fields

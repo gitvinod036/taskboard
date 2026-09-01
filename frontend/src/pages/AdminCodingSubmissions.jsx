@@ -48,7 +48,7 @@ export default function AdminCodingSubmissions() {
       {!loading && submissions.map((submission) => (
         <section className="submission-card" key={submission.id}>
           <div className="submission-card-header">
-            <div>
+            <div className="submission-card-main">
               <p className="section-kicker">#{submission.id} · {languageDisplayName(submission.language)} · {submission.problem_title}</p>
               <h2>{submission.user?.username || 'Unknown user'}</h2>
               <p className="submission-owner">
@@ -59,18 +59,18 @@ export default function AdminCodingSubmissions() {
                   ` · ${submission.passed_tests}/${submission.total_tests} tests`}
               </p>
             </div>
-            <span className={`submission-status submission-${String(submission.status).toLowerCase().replace(/_/g, '-')}`}>
-              {submission.status_label || submission.status}
-            </span>
-          </div>
-          <div className="submission-links">
-            <button
-              type="button"
-              className="button-muted button-small"
-              onClick={() => setOpenId(openId === submission.id ? null : submission.id)}
-            >
-              {openId === submission.id ? 'Hide code' : 'View source'}
-            </button>
+            <div className="submission-card-side">
+              <span className={`submission-status submission-${String(submission.status).toLowerCase().replace(/_/g, '-')}`}>
+                {submission.status_label || submission.status}
+              </span>
+              <button
+                type="button"
+                className="button-muted button-small"
+                onClick={() => setOpenId(openId === submission.id ? null : submission.id)}
+              >
+                {openId === submission.id ? 'Hide code' : 'View source'}
+              </button>
+            </div>
           </div>
           {openId === submission.id && (
             <pre className="code-block"><code>{submission.source_code}</code></pre>

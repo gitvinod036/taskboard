@@ -1,4 +1,4 @@
-from django.contrib.auth import logout
+﻿from django.contrib.auth import logout
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.conf import settings
@@ -27,10 +27,9 @@ from rest_framework.views import APIView
 
 from .pagination import StandardResultsPagination
 from .permissions import IsAdmin, IsNormalUser
-from .serializers import CodingProblemAdminSerializer, CodingProblemUserSerializer, AdminAssignedTaskSerializer, AdminAssignmentSerializer, AdminSubmissionSerializer, AdminUserDetailSerializer, AdminUserSerializer, AdminUserUpdateSerializer, LoginSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, RegisterSerializer, SubmissionReviewSerializer, TaskAssignmentSerializer, TaskSerializer, TaskSubmissionSerializer, TechStackSerializer, UserSerializer
-from .models import GoogleIdentity, GoogleLoginCode, Task, TaskAssignment, TaskSubmission, TechStack, UserTechStack
+from .serializers import CodingProblemAdminSerializer, CodingProblemUserSerializer, AdminAssignedTaskSerializer, AdminAssignmentSerializer, AdminSubmissionSerializer, AdminUserDetailSerializer, AdminUserSerializer, AdminUserUpdateSerializer, LoginSerializer, NotificationPreferenceSerializer, NotificationSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, RegisterSerializer, SubmissionAnalysisSerializer, SubmissionReviewSerializer, TaskAssignmentSerializer, TaskEvaluationSerializer, TaskSerializer, TaskSubmissionSerializer, TechStackSerializer, UserSerializer
+from .models import GoogleIdentity, GoogleLoginCode, Notification, NotificationPreference, SubmissionAnalysis, Task, TaskAssignment, TaskEvaluation, TaskSubmission, TechStack, UserTechStack
 
-User = get_user_model()
 User = get_user_model()
 
 
@@ -351,6 +350,64 @@ class MeTechStackView(APIView):
 		return Response(UserSerializer(request.user).data)
 
 
+class NotificationPreferenceView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def _get_preference(self, request):
+		# Lazily create with model defaults so existing users work untouched.
+		preference, _ = NotificationPreference.objects.get_or_create(user=request.user)
+		return preference
+
+	def get(self, request):
+		return Response(NotificationPreferenceSerializer(self._get_preference(request)).data)
+
+	def patch(self, request):
+		"""Users can update only their own notification preferences."""
+		preference = self._get_preference(request)
+		serializer = NotificationPreferenceSerializer(preference, data=request.data, partial=True)
+		serializer.is_valid(raise_exception=True)
+		serializer.save()
+		return Response(serializer.data)
+
+
+class NotificationListView(APIView):
+	"""GET the current user's notifications (newest first) + unread count.
+
+	Recipient is always request.user â€” a user can never read another user's
+	notifications, and no client-supplied recipient/filter is trusted.
+	"""
+
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request):
+		notifications = Notification.objects.filter(recipient=request.user)[:100]
+		unread_count = Notification.objects.filter(recipient=request.user, is_read=False).count()
+		return Response({
+			'results': NotificationSerializer(notifications, many=True).data,
+			'unread_count': unread_count,
+		})
+
+
+class NotificationMarkReadView(APIView):
+	"""POST mark one notification read ({id}) or all of them ({all: true})."""
+
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request):
+		if request.data.get('all'):
+			updated = Notification.objects.filter(recipient=request.user, is_read=False).update(is_read=True)
+			return Response({'marked': updated, 'unread_count': 0})
+		notification_id = request.data.get('id')
+		if notification_id is None:
+			return Response({'detail': 'Provide "id" or "all": true.'}, status=status.HTTP_400_BAD_REQUEST)
+		# Scoped to request.user: marking another user's notification is a no-op.
+		updated = Notification.objects.filter(
+			pk=notification_id, recipient=request.user, is_read=False,
+		).update(is_read=True)
+		unread_count = Notification.objects.filter(recipient=request.user, is_read=False).count()
+		return Response({'marked': updated, 'unread_count': unread_count})
+
+
 class AdminCheckView(APIView):
 	permission_classes = [IsAdmin]
 
@@ -388,7 +445,10 @@ class TaskListCreateView(APIView):
 	def post(self, request):
 		serializer = TaskSerializer(data=request.data)
 		serializer.is_valid(raise_exception=True)
-		serializer.save()
+		task = serializer.save()
+		# A) Notify every eligible active user about the new task (idempotent
+		# per user; the creating admin is excluded by notify_task_published).
+		notify_task_published(task, creator=request.user)
 		return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
@@ -462,13 +522,22 @@ class TaskSubmissionView(APIView):
 		assignment = TaskAssignment.objects.filter(task_id=task_id, user=request.user).first()
 		if assignment is None:
 			return Response({'detail': 'You can only submit tasks assigned to you.'}, status=status.HTTP_403_FORBIDDEN)
-		submission = TaskSubmission.objects.filter(task_id=task_id, user=request.user).first()
-		if submission and submission.status != TaskSubmission.Status.REJECTED:
+		existing = TaskSubmission.objects.filter(task_id=task_id, user=request.user).order_by('-id').first()
+		if existing and existing.status != TaskSubmission.Status.REJECTED:
 			return Response({'detail': 'This task already has a pending or approved submission.'}, status=status.HTTP_409_CONFLICT)
-		serializer = TaskSubmissionSerializer(submission, data=request.data, partial=False) if submission else TaskSubmissionSerializer(data=request.data)
+		serializer = TaskSubmissionSerializer(data=request.data)
 		serializer.is_valid(raise_exception=True)
-		serializer.save(task_id=task_id, user=request.user, status=TaskSubmission.Status.PENDING, feedback='', reviewed_at=None, reviewed_by=None)
-		return Response(serializer.data, status=status.HTTP_200_OK if submission else status.HTTP_201_CREATED)
+		# Resubmission always creates a NEW attempt row (history preserved).
+		# A rejected attempt is never overwritten or deleted; the reviewer's
+		# decision on the newest attempt is the authoritative outcome.
+		created = existing is None
+		serializer.save(task_id=task_id, user=request.user, status=TaskSubmission.Status.PENDING, feedback='', reviewed_at=None, reviewed_by=None, earned_points=0)
+		# B)/F) Notify staff reviewers; a resubmission (the user had a
+		# previous attempt) uses the "Improved Submission" wording.
+		submission = TaskSubmission.objects.filter(task_id=task_id, user=request.user).order_by('-id').first()
+		if submission is not None:
+			notify_submission_received(submission, is_resubmission=not created)
+		return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
 
 class MyTasksView(APIView):
@@ -481,7 +550,9 @@ class MyTasksView(APIView):
 			.select_related('task')
 			.prefetch_related(Prefetch(
 				'task__submissions',
-				queryset=TaskSubmission.objects.filter(user=request.user),
+				# Newest attempt first (orders by DB id desc when ids increase
+				# with creation_time), so the authoritative attempt is index 0.
+				queryset=TaskSubmission.objects.filter(user=request.user).order_by('-id'),
 				to_attr='user_submissions',
 			))
 			# The nested TaskSerializer serializes task.tech_stack; prefetch it
@@ -644,7 +715,9 @@ class AdminSubmissionReviewView(APIView):
 		try:
 			# select_related mirrors the serializer's task/user access so a
 			# review costs no extra per-relation queries.
-			submission = TaskSubmission.objects.select_related('task', 'user').get(pk=submission_id)
+			submission = TaskSubmission.objects.select_related(
+				'task', 'user', 'user__notification_preference',
+			).get(pk=submission_id)
 		except TaskSubmission.DoesNotExist:
 			return Response({'detail': 'Submission not found.'}, status=status.HTTP_404_NOT_FOUND)
 		serializer = SubmissionReviewSerializer(data=request.data)
@@ -653,8 +726,81 @@ class AdminSubmissionReviewView(APIView):
 		submission.feedback = serializer.validated_data.get('feedback', '')
 		submission.reviewed_by = request.user
 		submission.reviewed_at = timezone.now()
-		submission.save(update_fields=('status', 'feedback', 'reviewed_by', 'reviewed_at'))
+		with transaction.atomic():
+			submission.save(update_fields=('status', 'feedback', 'reviewed_by', 'reviewed_at'))
+			# Award points exactly once, server-side, on approval (0 for a
+			# rejection). award_normal_task_points is idempotent and row-locked,
+			# so repeated or concurrent reviews can never double-award.
+			if submission.status == TaskSubmission.Status.APPROVED:
+				award_normal_task_points(submission)
+			# C)/D) Notify the submitting user about the review outcome.
+			notify_submission_reviewed(submission)
 		return Response(AdminSubmissionSerializer(submission).data)
+
+
+class TaskSubmissionEvaluationView(APIView):
+	"""GET/POST the AI evaluation of a normal-task submission.
+
+	Authorization: the submission's owner (normal user) or any admin.
+	POST runs the evaluation through the existing free-Gemini fallback:
+	  - Only APPROVED submissions can be evaluated (the reviewer/judge is the
+	    source of truth for acceptance); anything else is 409.
+	  - The AI's rubric category scores are validated server-side and the
+	    total is ALWAYS recomputed by the backend â€” an AI-supplied total is
+	    ignored, so no AI response can award more than the fixed 10 points.
+	  - A provider failure marks the evaluation FAILED with zero score and
+	    returns the safe 503 the frontend already handles; the user may retry.
+	    A failed evaluation never awards points or marks the task solved.
+	  - Nothing in request.data is ever trusted: score, points, user_id and
+	    solved status are all derived server-side.
+	"""
+
+	def get_submission(self, request, submission_id):
+		qs = TaskSubmission.objects.select_related('task', 'user')
+		if request.user.is_staff or request.user.is_superuser:
+			return qs.filter(pk=submission_id).first()
+		return qs.filter(pk=submission_id, user=request.user).first()
+
+	def get(self, request, submission_id):
+		submission = self.get_submission(request, submission_id)
+		if submission is None:
+			return Response({'detail': 'Submission not found.'}, status=status.HTTP_404_NOT_FOUND)
+		evaluation = TaskEvaluation.objects.filter(submission=submission).first()
+		if evaluation is None:
+			return Response({'detail': 'No evaluation yet.'}, status=status.HTTP_404_NOT_FOUND)
+		evaluation.best_score = best_task_evaluation_score(submission.user_id, submission.task_id)
+		return Response(TaskEvaluationSerializer(evaluation).data)
+
+	def post(self, request, submission_id):
+		submission = self.get_submission(request, submission_id)
+		if submission is None:
+			return Response({'detail': 'Submission not found.'}, status=status.HTTP_404_NOT_FOUND)
+		if submission.status != TaskSubmission.Status.APPROVED:
+			return Response(
+				{'detail': 'Only approved submissions can be evaluated.'},
+				status=status.HTTP_409_CONFLICT,
+			)
+		try:
+			data = generate_task_evaluation(submission)
+		except DjangoValidationError:
+			# Invalid AI output: no score, retry allowed.
+			record_task_evaluation_failure(submission, 'The AI returned an invalid evaluation. Try again.')
+			return Response(
+				{'detail': 'The AI returned an invalid evaluation. You can retry.'},
+				status=status.HTTP_502_BAD_GATEWAY,
+			)
+		except RuntimeError:
+			# Safe provider failure (all free models exhausted / not configured).
+			record_task_evaluation_failure(submission)
+			return Response(
+				{'detail': 'AI service is temporarily unavailable. Please try again shortly.'},
+				status=status.HTTP_503_SERVICE_UNAVAILABLE,
+			)
+		evaluation = save_task_evaluation(submission, data)
+		evaluation.best_score = best_task_evaluation_score(submission.user_id, submission.task_id)
+		# E) Successful evaluation only â€” failed evaluations never notify.
+		notify_evaluation_completed(submission, evaluation)
+		return Response(TaskEvaluationSerializer(evaluation).data, status=status.HTTP_200_OK)
 
 
 class AdminUserTasksView(APIView):
@@ -854,7 +1000,7 @@ class AdminDashboardView(APIView):
 
 
 from .models import CodingProblem, CodingProblemTestCase
-from .services import create_coding_problem_from_ai
+from .services import build_submission_analysis_context, create_coding_problem_from_ai, generate_submission_analysis, generate_task_draft, MAX_TASK_DRAFT_PROMPT_LENGTH, save_submission_analysis, coding_leaderboard, generate_task_evaluation, save_task_evaluation, record_task_evaluation_failure, best_task_evaluation_score, award_normal_task_points, notify_task_published, notify_submission_received, notify_submission_reviewed, notify_evaluation_completed
 from django.core.exceptions import ValidationError as DjangoValidationError
 
 
@@ -875,13 +1021,42 @@ class CodingProblemGenerateView(APIView):
 			return Response({'detail': 'Both title and idea are required.'}, status=status.HTTP_400_BAD_REQUEST)
 		try:
 			problem = create_coding_problem_from_ai(title, idea, request.user)
-		except RuntimeError as exc:
-			return Response({'detail': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+		except RuntimeError:
+			return Response({'detail': 'AI service is temporarily unavailable. Please try again shortly.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 		except DjangoValidationError as exc:
 			detail = exc.detail if hasattr(exc, 'detail') else exc.messages
 			return Response({'detail': detail}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
 		serializer = CodingProblemAdminSerializer(problem, context={'request': request})
 		return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class TaskDraftAIView(APIView):
+	"""AI Task Assistant: generates a task DRAFT for admin review.
+
+	Draft-only by design â€” nothing is persisted; the admin edits the result
+	and creates the task through the existing POST /api/tasks/ flow.
+	Task creation in this app is admin-only, so generation is too.
+	"""
+
+	permission_classes = [IsAdmin]
+
+	def post(self, request):
+		prompt = request.data.get('prompt')
+		if not isinstance(prompt, str):
+			return Response({'detail': 'prompt must be a string.'}, status=status.HTTP_400_BAD_REQUEST)
+		prompt = prompt.strip()
+		if not prompt:
+			return Response({'detail': 'prompt is required.'}, status=status.HTTP_400_BAD_REQUEST)
+		if len(prompt) > MAX_TASK_DRAFT_PROMPT_LENGTH:
+			return Response({'detail': f'prompt must be at most {MAX_TASK_DRAFT_PROMPT_LENGTH} characters.'}, status=status.HTTP_400_BAD_REQUEST)
+		try:
+			draft = generate_task_draft(prompt)
+		except RuntimeError:
+			return Response({'detail': 'AI service is temporarily unavailable. Please try again shortly.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+		except DjangoValidationError as exc:
+			detail = exc.detail if hasattr(exc, 'detail') else exc.messages
+			return Response({'detail': detail}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+		return Response(draft)
 
 
 class AdminCodingProblemsView(APIView):
@@ -1091,11 +1266,23 @@ class CodingSubmissionDetailView(APIView):
 		return Response(CodeSubmissionUserSerializer(submission, context={'request': request}).data)
 
 
+class CodingLeaderboardView(APIView):
+	"""Deterministic leaderboard of coding points for all members.
+
+	Fully derived from judge results (only ACCEPTED SUBMIT submissions count);
+	no stored scores, so clients can never inject or alter points.
+	"""
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request):
+		return Response(coding_leaderboard())
+
+
 class AdminCodingSubmissionsView(APIView):
 	"""Admin listing/inspection of coding submissions.
 
 	Read-only by design: admins can review code but cannot fabricate or edit
-	execution results through this API — those come from Phase 3.
+	execution results through this API â€” those come from Phase 3.
 	"""
 	permission_classes = [IsAdmin]
 
@@ -1135,6 +1322,96 @@ class AdminCodeSubmissionDetailView(APIView):
 		if submission is None:
 			return Response({'detail': 'Submission not found.'}, status=status.HTTP_404_NOT_FOUND)
 		return Response(AdminCodeSubmissionSerializer(submission).data)
+
+
+def _build_analysis_response(submission, serializer):
+	judge_result = {
+		'status': submission.status,
+		'verdict': submission.verdict,
+		'passed_tests': submission.passed_tests,
+		'total_tests': submission.total_tests,
+		'execution_time': submission.execution_time,
+		'memory_used': submission.memory_used,
+		'feedback': submission.feedback,
+	}
+	return {
+		'submission': serializer(submission).data,
+		'judge_result': judge_result,
+		'analysis': None,
+	}
+
+
+class SubmissionAnalysisView(APIView):
+	"""Analyze one of the current user's own completed submissions.
+
+	The existing judge remains the sole source of truth for pass/fail;
+	this endpoint returns Gemini's qualitative coaching only. A non-owner
+	(including an admin using the user endpoint) gets a 404 so the
+	existence of another user's submission is never confirmed.
+	"""
+	permission_classes = [IsAuthenticated]
+
+	def get_submission(self, request, submission_id):
+		return (
+			CodeSubmission.objects
+			.select_related('problem', 'user')
+			.filter(user=request.user, pk=submission_id)
+			.first()
+		)
+
+	def post(self, request, submission_id):
+		submission = self.get_submission(request, submission_id)
+		if submission is None:
+			return Response({'detail': 'Submission not found.'}, status=status.HTTP_404_NOT_FOUND)
+		return self._run(submission, CodeSubmissionUserSerializer, request)
+
+	def _run(self, submission, serializer, request):
+		try:
+			context_text = build_submission_analysis_context(submission)
+			data = generate_submission_analysis(context_text)
+			analysis = save_submission_analysis(submission, data)
+		except RuntimeError:
+			return Response({'detail': 'AI service is temporarily unavailable. Please try again shortly.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+		except DjangoValidationError as exc:
+			detail = exc.detail if hasattr(exc, 'detail') else exc.messages
+			return Response({'detail': detail}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+		payload = _build_analysis_response(submission, serializer)
+		payload['analysis'] = SubmissionAnalysisSerializer(analysis).data
+		return Response(payload, status=status.HTTP_200_OK)
+
+
+class AdminSubmissionAnalysisView(APIView):
+	"""Admin-only AI analysis of any submission an admin can inspect.
+
+	Same qualitative-only behaviour as SubmissionAnalysisView, but scoped
+	by IsAdmin (admins use this instead of the user endpoint).
+	"""
+	permission_classes = [IsAdmin]
+
+	def get_object(self, submission_id):
+		return (
+			CodeSubmission.objects
+			.select_related('problem', 'user')
+			.filter(pk=submission_id)
+			.first()
+		)
+
+	def post(self, request, submission_id):
+		submission = self.get_object(submission_id)
+		if submission is None:
+			return Response({'detail': 'Submission not found.'}, status=status.HTTP_404_NOT_FOUND)
+		try:
+			context_text = build_submission_analysis_context(submission)
+			data = generate_submission_analysis(context_text)
+			analysis = save_submission_analysis(submission, data)
+		except RuntimeError:
+			return Response({'detail': 'AI service is temporarily unavailable. Please try again shortly.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+		except DjangoValidationError as exc:
+			detail = exc.detail if hasattr(exc, 'detail') else exc.messages
+			return Response({'detail': detail}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+		payload = _build_analysis_response(submission, AdminCodeSubmissionSerializer)
+		payload['analysis'] = SubmissionAnalysisSerializer(analysis).data
+		return Response(payload, status=status.HTTP_200_OK)
 
 
 

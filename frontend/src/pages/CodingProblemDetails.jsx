@@ -4,24 +4,7 @@ import api from '../services/api'
 import WorkspaceNav from '../components/WorkspaceNav'
 import Pagination from '../components/Pagination'
 import { languageDisplayName } from '../languages'
-
-function DifficultyBadge({ difficulty }) {
-  if (!difficulty) return null
-  const cls = difficulty.toLowerCase()
-  return <span className={`difficulty-badge difficulty-${cls}`}>{difficulty}</span>
-}
-
-function LanguageChips({ languages }) {
-  const langs = Array.isArray(languages) ? languages : []
-  if (langs.length === 0) return null
-  return (
-    <span className="language-chip-list">
-      {langs.map((lang) => (
-        <span key={lang} className="language-chip">{languageDisplayName(lang)}</span>
-      ))}
-    </span>
-  )
-}
+import { DifficultyBadge, LanguageChips, PointsChip } from './CodingProblems'
 
 export default function CodingProblemDetails({ problemId }) {
   const [problem, setProblem] = useState(null)
@@ -70,6 +53,7 @@ export default function CodingProblemDetails({ problemId }) {
           <h1>{problem.title}</h1>
           <div className="meta-badges">
             <DifficultyBadge difficulty={problem.difficulty} />
+            <PointsChip points={problem.points} />
             <LanguageChips languages={problem.allowed_languages} />
           </div>
         </div>

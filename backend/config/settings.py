@@ -146,9 +146,38 @@ EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
 EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True').lower() == 'true'
 
 # --- AI generation (server-side only; never exposed to the frontend) ---
-AI_API_KEY = os.getenv('AI_API_KEY', '')
-AI_MODEL = os.getenv('AI_MODEL', 'gemini-2.5-flash')
+# Google Gemini is the single AI provider. Keys are read in priority order:
+# numbered GEMINI_API_KEY_1..4 first (blank values ignored); if none are set,
+# the legacy single GEMINI_API_KEY (or its alias AI_API_KEY) is used. Keys are
+# server-side only and are never exposed to the frontend, logs or responses.
+def _gemini_api_keys():
+    numbered = []
+    for i in range(1, 5):
+        value = os.getenv(f'GEMINI_API_KEY_{i}', '').strip()
+        if value:
+            numbered.append(value)
+    if numbered:
+        return numbered
+    legacy = os.getenv('GEMINI_API_KEY', '').strip() or os.getenv('AI_API_KEY', '').strip()
+    return [legacy] if legacy else []
+GEMINI_API_KEYS = _gemini_api_keys()
+# Backwards-compatible alias for the primary key (single-key setups).
+AI_API_KEY = GEMINI_API_KEYS[0] if GEMINI_API_KEYS else ''
+# gemini-2.5-flash is no longer available to new Google AI keys; 3.6-flash is current.
+AI_MODEL = os.getenv('AI_MODEL', 'gemini-3.6-flash')
+# Ordered Gemini model fallback chain (server-side only). Comma-separated, tried
+# strictly in order:the first is primary, each later model is a fallback used only
+# when the previous fails with a retryable provider error (rate limit, quota,
+# 5xx, model unavailable, transient network error). When AI_MODELS is unset
+# the legacy single AI_MODEL is used as the only entry.
+AI_MODELS = [
+    model.strip() for model in os.getenv('AI_MODELS', '').split(',') if model.strip()
+] or [AI_MODEL]
+AI_MODELS = list(dict.fromkeys(AI_MODELS)) or [AI_MODEL]
 AI_BASE_URL = os.getenv('AI_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta/models')
+# Per-attempt HTTP timeout (seconds). Key fallback is sequential, so worst case
+# is ~len(GEMINI_API_KEYS) * len(AI_MODELS) * AI_REQUEST_TIMEOUT.
+AI_REQUEST_TIMEOUT = float(os.getenv('AI_REQUEST_TIMEOUT', '30'))
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.TokenAuthentication',
@@ -186,10 +215,12 @@ if not DEBUG:
 
 
 CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
     "https://taskboard-x6ef.onrender.com",
     "https://taskboard-puce-two.vercel.app",
 ]
 
-CORS_ALLOWED_ORIGIN_REGEXES = [
-    r"^http://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
-]
+# NOTE: CORS_ALLOWED_ORIGIN_REGEXES is defined once above (near the other CORS
+# settings). Do not redefine it further down — a duplicate silently overwrites
+# the earlier value and any drift between them causes confusing CORS failures.

@@ -41,6 +41,7 @@ class FakeAI:
     """Stand-in for the real AIClient so tests never touch the network."""
 
     configured = True
+    any_provider_configured = True
 
     def __init__(self, payload=VALID_AI):
         self.payload = payload
@@ -182,7 +183,7 @@ class GenerateCodingProblemTests(CodingProblemTestBase):
     def test_unconfigured_ai_returns_503(self):
         self.authenticate(self.admin)
         fake = FakeAI()
-        fake.configured = False
+        fake.any_provider_configured = False
         with patch('taskflow.services.AIClient', return_value=fake):
             response = self.generate()
         self.assertEqual(response.status_code, 503)
@@ -207,6 +208,92 @@ class AdminManageCodingProblemTests(CodingProblemTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['description'], 'Updated description.')
         self.assertEqual(response.data['status'], CodingProblem.Status.DRAFT)
+
+    def test_admin_can_save_a_completely_empty_draft(self):
+        # A brand-new problem with every field empty must still save as DRAFT.
+        self.authenticate(self.admin)
+        response = self.client.post(
+            '/api/admin/coding/problems/',
+            {'status': CodingProblem.Status.DRAFT},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data['status'], CodingProblem.Status.DRAFT)
+        problem = CodingProblem.objects.get(pk=response.data['id'])
+        self.assertEqual(problem.status, CodingProblem.Status.DRAFT)
+        self.assertEqual(problem.title, '')
+        self.assertEqual(problem.description, '')
+
+    def test_admin_can_save_a_partial_draft(self):
+        # Title-only (and partial) drafts must be accepted.
+        self.authenticate(self.admin)
+        response = self.client.post(
+            '/api/admin/coding/problems/',
+            {'title': 'Solo title', 'status': CodingProblem.Status.DRAFT},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data['title'], 'Solo title')
+        self.assertEqual(response.data['status'], CodingProblem.Status.DRAFT)
+
+    def test_admin_can_patch_a_draft_with_partial_data(self):
+        # PATCH on an existing DRAFT with empty/incomplete fields succeeds.
+        problem = self.create_draft(description='')
+        self.add_test_cases(problem)
+        self.authenticate(self.admin)
+        response = self.client.patch(
+            f'/api/admin/coding/problems/{problem.id}/',
+            {'description': '', 'constraints': ''},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200)
+        problem.refresh_from_db()
+        self.assertEqual(problem.description, '')
+        self.assertEqual(problem.status, CodingProblem.Status.DRAFT)
+
+    def test_generate_then_save_draft_patches_same_id_no_duplicate(self):
+        # Generate -> AIClient persists a DRAFT with a real id. A subsequent
+        # Save Draft must PATCH that same id (not POST a second row).
+        self.authenticate(self.admin)
+        with patch('taskflow.services.AIClient', return_value=FakeAI()):
+            generated = self.client.post(
+                '/api/admin/coding/problems/generate/',
+                {'title': 'Two Sum', 'idea': 'sum'},
+            )
+        self.assertEqual(generated.status_code, 201)
+        problem_id = generated.data['id']
+        self.assertEqual(CodingProblem.objects.count(), 1)
+
+        # Simulate the frontend's Save Draft: PATCH the persisted id.
+        save = self.client.patch(
+            f'/api/admin/coding/problems/{problem_id}/',
+            {'description': generated.data['description'], 'status': CodingProblem.Status.DRAFT},
+            format='json',
+        )
+        self.assertEqual(save.status_code, 200)
+        self.assertEqual(save.data['id'], problem_id)
+        # No duplicate row must be created by the update.
+        self.assertEqual(CodingProblem.objects.count(), 1)
+        self.assertEqual(CodingProblem.objects.get(pk=problem_id).status, CodingProblem.Status.DRAFT)
+
+    def test_empty_draft_cannot_be_published(self):
+        # Save an empty DRAFT, then attempt PUBLISH -> full validation failure.
+        self.authenticate(self.admin)
+        created = self.client.post(
+            '/api/admin/coding/problems/',
+            {'status': CodingProblem.Status.DRAFT},
+            format='json',
+        )
+        self.assertEqual(created.status_code, 201)
+        problem_id = created.data['id']
+        response = self.client.patch(
+            f'/api/admin/coding/problems/{problem_id}/',
+            {'status': CodingProblem.Status.PUBLISHED},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+        problem = CodingProblem.objects.get(pk=problem_id)
+        self.assertEqual(problem.status, CodingProblem.Status.DRAFT)
 
     def test_admin_can_publish_a_draft(self):
         problem = self.create_draft()

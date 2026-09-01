@@ -29,7 +29,7 @@ export function DonutChart({ segments = [], size = 168, thickness = 26, ariaLabe
 
   return (
     <svg className="donut-chart" viewBox={`0 0 ${size} ${size}`} role="img" aria-label={ariaLabel}>
-      <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="#e2e8f0" strokeWidth={thickness} />
+      <circle className="donut-track" cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="#e2e8f0" strokeWidth={thickness} />
       {arcs.map((arc) => (
         <circle
           cx={size / 2}
@@ -87,7 +87,7 @@ export function TrendChart({ points = [], height = 210, ariaLabel = 'Weekly acti
         const y = padTop + plotHeight * fraction
         return (
           <g key={fraction}>
-            <line x1={padLeft} x2={width - padRight} y1={y} y2={y} stroke="#e2e8f0" strokeWidth="1" />
+            <line className="trend-grid-line" x1={padLeft} x2={width - padRight} y1={y} y2={y} stroke="#e2e8f0" strokeWidth="1" />
             <text x={padLeft - 8} y={y} textAnchor="end" dominantBaseline="middle" className="trend-axis-label">
               {Math.round(maxValue * (1 - fraction))}
             </text>
@@ -132,16 +132,36 @@ export function HorizontalBars({ items = [], color = '#1d4ed8' }) {
     )
   }
 
-  const maxValue = Math.max(...items.map((item) => safeCount(item.value)), 1)
+  // Max is floored at 0 (not 1) so an all-zero dataset never divides by a
+  // fabricated scale — every percentage resolves to exactly 0 below.
+  const maxValue = Math.max(...items.map((item) => safeCount(item.value)), 0)
+
+  // Entire dataset has no activity → show the compact empty state only;
+  // a long list of zero rows would be meaningless. Individual zero rows
+  // still render (at 0% fill) whenever real activity exists.
+  if (maxValue === 0) {
+    return (
+      <p className="empty-state">
+        <strong>No technology activity recorded yet</strong>
+        <span>Technology insights will appear as tasks and submissions are added.</span>
+      </p>
+    )
+  }
+
   return (
     <ul className="bar-list">
-      {items.map((item) => (
-        <li className="bar-row" key={item.label}>
-          <span className="bar-name">{item.label}</span>
-          <span className="bar-track"><span className="bar-fill" style={{ width: `${Math.max((safeCount(item.value) / maxValue) * 100, 2)}%`, background: color }} /></span>
-          <span className="bar-value">{safeCount(item.value)}</span>
-        </li>
-      ))}
+        {items.map((item) => {
+          const count = safeCount(item.value)
+          const percentage = (count / maxValue) * 100
+          const safePercentage = Math.max(0, Math.min(100, Number.isFinite(percentage) ? percentage : 0))
+          return (
+            <li className="bar-row" key={item.label}>
+              <span className="bar-name">{item.label}</span>
+              <span className="bar-track"><span className="bar-fill" style={{ width: `${safePercentage}%`, background: count > 0 ? color : 'transparent' }} /></span>
+              <span className="bar-value">{count}</span>
+            </li>
+          )
+        })}
     </ul>
   )
 }
