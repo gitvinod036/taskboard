@@ -102,6 +102,23 @@ if cors_allowed_origins_env:
         for origin in cors_allowed_origins_env.split(",")
         if origin.strip()
     ]
+    # Local development safety net: an env-provided allowlist (e.g. the
+    # production deployment) may not list the local Vite dev servers, and
+    # django-cors-headers answers a disallowed-origin preflight with 200 but
+    # NO Access-Control-Allow-Origin — the browser then blocks the actual
+    # request with a CORS error even though OPTIONS looked fine. In DEBUG
+    # only, always trust the local dev origins so a shared/production env
+    # file never breaks local development. Production (DEBUG=False) keeps
+    # the env allowlist exactly as configured.
+    if DEBUG:
+        for local_origin in (
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:5174",
+            "http://127.0.0.1:5174",
+        ):
+            if local_origin not in CORS_ALLOWED_ORIGINS:
+                CORS_ALLOWED_ORIGINS.append(local_origin)
 else:
     CORS_ALLOWED_ORIGINS = [
         "http://localhost:5173",
