@@ -1014,6 +1014,12 @@ def leaderboard():
     value for backwards compatibility with existing consumers.
     """
     # Coding: distinct ACCEPTED SUBMITS per (user, problem).
+    # NOTE: .order_by() (no args) clears the model's default ordering
+    # ('-created_at', '-id'). Without it, Django appends those ordering
+    # columns to the SELECT DISTINCT, so every submission row stays unique
+    # and the distinct collapses nothing -> a user's extra attempts at the
+    # same problem are double-counted. Clearing ordering keeps the DISTINCT
+    # strictly over (user_id, problem_id, difficulty).
     solved_rows = (
         CodeSubmission.objects
         .filter(
@@ -1021,6 +1027,7 @@ def leaderboard():
             mode=CodeSubmission.Mode.SUBMIT,
         )
         .exclude(problem__status=CodingProblem.Status.DRAFT)
+        .order_by()
         .values('user_id', 'problem_id', 'problem__difficulty')
         .distinct()
     )
